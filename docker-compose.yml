@@ -16,5 +16,43 @@ services:
       retries: 10
     restart: unless-stopped
 
+  n8n:
+    image: ${N8N_IMAGE:-docker.n8n.io/n8nio/n8n:latest}
+    init: true
+    environment:
+      N8N_HOST: localhost
+      N8N_PORT: 5678
+      N8N_PROTOCOL: http
+      N8N_EDITOR_BASE_URL: http://localhost:${N8N_PORT:-5678}
+      WEBHOOK_URL: http://localhost:${N8N_PORT:-5678}
+      N8N_ENCRYPTION_KEY: ${N8N_ENCRYPTION_KEY:?Set N8N_ENCRYPTION_KEY}
+      N8N_ENFORCE_SETTINGS_FILE_PERMISSIONS: "true"
+      N8N_DIAGNOSTICS_ENABLED: "false"
+      N8N_PERSONALIZATION_ENABLED: "false"
+      N8N_VERSION_NOTIFICATIONS_ENABLED: "false"
+      N8N_RUNNERS_ENABLED: "true"
+      GENERIC_TIMEZONE: ${GENERIC_TIMEZONE:-Africa/Casablanca}
+      TZ: ${GENERIC_TIMEZONE:-Africa/Casablanca}
+      BACKEND_URL: ${N8N_BACKEND_URL:-http://host.docker.internal:8000}
+      WEBHOOK_SECRET: ${WEBHOOK_SECRET:?Set WEBHOOK_SECRET}
+    ports:
+      - "127.0.0.1:${N8N_PORT:-5678}:5678"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - n8n_data:/home/node/.n8n
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          node -e "fetch('http://127.0.0.1:5678/healthz').then(response =>
+          process.exit(response.ok ? 0 : 1)).catch(() => process.exit(1))"
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+    restart: unless-stopped
+
 volumes:
   postgres_data:
+  n8n_data:
