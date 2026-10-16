@@ -33,6 +33,33 @@ export type Thread = {
   emails: Email[];
 };
 
+export type DraftTone = "formel" | "neutre" | "court";
+
+export type Draft = {
+  id: string;
+  email_id: string;
+  body_text: string;
+  tone: DraftTone;
+  generated_by_ai: boolean;
+  created_at: string;
+  updated_at: string;
+};
+
+export type ReplyStatus = "pending" | "sending" | "sent" | "failed";
+
+export type Reply = {
+  id: string;
+  email_id: string;
+  thread_id: string;
+  draft_id: string | null;
+  idempotency_key: string;
+  body_text: string;
+  status: ReplyStatus;
+  created_at: string;
+  sent_at: string | null;
+  error_message: string | null;
+};
+
 export type PriorityEmail = {
   id: string;
   thread_id: string;

@@ -29,3 +29,11 @@ def get_settings() -> Settings:
     if expire_minutes <= 0:
         raise RuntimeError("JWT_EXPIRE_MINUTES must be greater than zero")
     return Settings(jwt_secret=secret, jwt_expire_minutes=expire_minutes)
+
+
+@lru_cache
+def get_webhook_secret() -> str:
+    secret = os.environ.get("WEBHOOK_SECRET", "")
+    if len(secret) < 32:
+        raise RuntimeError("WEBHOOK_SECRET must contain at least 32 characters")
+    return secret

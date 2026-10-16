@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { AlertCircle, ArrowLeft, Inbox, LoaderCircle, RefreshCw } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
+import { ReplyComposer } from "@/components/reply-composer";
 import { useCurrentUser } from "@/components/user-provider";
 import type { Thread } from "@/types/api";
 
@@ -113,8 +114,9 @@ export function Conversation({ threadId }: { threadId: string }) {
         </section>
       ) : null}
       {!loading && !error && thread && thread.emails.length > 0 ? (
-        <div className="space-y-3">
-          {thread.emails.map((message) => {
+        <>
+          <div className="space-y-3">
+            {thread.emails.map((message) => {
             const sent = isSentByUser(message.sender, user.email);
             return (
               <article
@@ -159,8 +161,15 @@ export function Conversation({ threadId }: { threadId: string }) {
                 </div>
               </article>
             );
-          })}
-        </div>
+            })}
+          </div>
+          <ReplyComposer
+            emailId={
+              [...thread.emails].reverse().find((message) => !isSentByUser(message.sender, user.email))?.id
+              ?? thread.emails[thread.emails.length - 1].id
+            }
+          />
+        </>
       ) : null}
     </div>
   );
