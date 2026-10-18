@@ -97,3 +97,41 @@ class ReplyResponse(BaseModel):
     created_at: datetime
     sent_at: datetime | None
     error_message: str | None
+
+
+class GmailSendResult(BaseModel):
+    reply_id: UUID
+    dispatch_id: UUID
+    user_id: UUID
+    email_id: UUID
+    idempotency_key: str = Field(min_length=1, max_length=255)
+    status: Literal["sent", "failed"]
+    gmail_message_id: str | None = Field(default=None, max_length=255)
+    gmail_thread_id: str | None = Field(default=None, max_length=255)
+    error_message: str | None = Field(default=None, max_length=2_000)
+
+    @field_validator(
+        "idempotency_key", "gmail_message_id", "gmail_thread_id", "error_message"
+    )
+    @classmethod
+    def strip_result_text(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        value = value.strip()
+        return value or None
+
+    @model_validator(mode="after")
+    def validate_result(self):
+        if self.status == "sent":
+            if self.gmail_message_id is None or self.gmail_thread_id is None:
+                raise ValueError(
+                    "gmail_message_id and gmail_thread_id are required when status is sent"
+                )
+            if self.error_message is not None:
+                raise ValueError("error_message is only accepted when status is failed")
+        else:
+            if self.error_message is None:
+                raise ValueError("error_message is required when status is failed")
+            if self.gmail_message_id is not None or self.gmail_thread_id is not None:
+                raise ValueError("Gmail identifiers are only accepted when status is sent")
+        return self

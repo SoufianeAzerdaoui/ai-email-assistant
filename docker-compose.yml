@@ -31,8 +31,8 @@ services:
       N8N_PERSONALIZATION_ENABLED: "false"
       N8N_VERSION_NOTIFICATIONS_ENABLED: "false"
       N8N_RUNNERS_ENABLED: "true"
-      GENERIC_TIMEZONE: ${GENERIC_TIMEZONE:-Africa/Casablanca}
-      TZ: ${GENERIC_TIMEZONE:-Africa/Casablanca}
+      GENERIC_TIMEZONE: ${GENERIC_TIMEZONE:-Europe/Paris}
+      TZ: ${GENERIC_TIMEZONE:-Europe/Paris}
       BACKEND_URL: ${N8N_BACKEND_URL:-http://host.docker.internal:8000}
       WEBHOOK_SECRET: ${WEBHOOK_SECRET:?Set WEBHOOK_SECRET}
     ports:

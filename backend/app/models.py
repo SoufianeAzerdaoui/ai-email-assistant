@@ -179,6 +179,7 @@ class Reply(Record, Base):
     email_id: Mapped[UUID] = mapped_column(Uuid, index=True)
     draft_id: Mapped[UUID | None] = mapped_column(Uuid, index=True)
     idempotency_key: Mapped[str] = mapped_column(String(255))
+    dispatch_id: Mapped[UUID | None] = mapped_column(Uuid)
     body_text: Mapped[str] = mapped_column(Text)
     status: Mapped[str] = mapped_column(String(16), server_default="pending")
     gmail_message_id: Mapped[str | None] = mapped_column(String(255))

@@ -1,23 +1,33 @@
-"""Manual draft management and idempotent reply request creation."""
+"""Manual drafts and human-confirmed, idempotent Gmail reply requests."""
 
+from datetime import datetime, timezone
 from typing import Annotated
 from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Response, status
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.dialects.postgresql import insert
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.auth import get_current_user
+from app.classification_routes import verify_webhook_secret
 from app.database import get_db
 from app.draft_reply_schemas import (
     DraftCreate,
     DraftResponse,
     DraftUpdate,
+    GmailSendResult,
     ReplyCreate,
     ReplyResponse,
 )
-from app.models import Draft, Email, Reply, User
+from app.models import Draft, Email, Reply, Thread, User
+from app.n8n_client import (
+    GmailReplyDispatch,
+    N8nDispatchError,
+    N8nDispatchUncertainError,
+    dispatch_gmail_reply,
+)
 
 
 router = APIRouter(tags=["drafts", "replies"])
@@ -168,14 +178,52 @@ def create_reply_request(
         db.rollback()
         raise HTTPException(status_code=409, detail="Idempotency key already used for another request")
 
-    if created:
-        db.commit()
-        db.refresh(reply)
-    else:
+    if not created:
         response.status_code = status.HTTP_200_OK
 
-    # No delivery is attempted here. Future n8n work must atomically claim pending
-    # rows as sending; a sending row remains uncertain until a callback marks it.
+    dispatch_id = uuid4()
+    claimed = db.execute(
+        update(Reply)
+        .where(Reply.id == reply.id, Reply.status.in_(("pending", "failed")))
+        .values(status="sending", dispatch_id=dispatch_id, error_message=None)
+        .returning(Reply.id)
+    ).scalar_one_or_none()
+    db.commit()
+
+    if claimed is not None:
+        thread = db.get(Thread, email.thread_id)
+        if thread is None:  # Protected by the email foreign key; kept defensive.
+            raise HTTPException(status_code=409, detail="Email thread not found")
+        dispatch_payload: GmailReplyDispatch = {
+            "reply_id": str(reply.id),
+            "dispatch_id": str(dispatch_id),
+            "user_id": str(current_user.id),
+            "email_id": str(email.id),
+            "idempotency_key": reply.idempotency_key,
+            "gmail_message_id": email.gmail_message_id,
+            "gmail_thread_id": thread.gmail_thread_id,
+            "rfc_message_id": email.message_id,
+            "recipient": email.sender,
+            "subject": email.subject,
+            "body_text": reply.body_text,
+        }
+        try:
+            dispatch_gmail_reply(dispatch_payload)
+        except N8nDispatchUncertainError as error:
+            db.execute(
+                update(Reply)
+                .where(Reply.id == reply.id, Reply.status == "sending")
+                .values(error_message=str(error))
+            )
+        except N8nDispatchError as error:
+            db.execute(
+                update(Reply)
+                .where(Reply.id == reply.id, Reply.status == "sending")
+                .values(status="failed", error_message=str(error))
+            )
+        db.commit()
+
+    db.refresh(reply)
     return reply_response(reply, email.thread_id)
 
 
@@ -194,3 +242,64 @@ def get_reply(
         raise HTTPException(status_code=404, detail="Reply not found")
     reply, thread_id = row
     return reply_response(reply, thread_id)
+
+
+@router.post(
+    "/internal/webhooks/gmail-send-result",
+    response_model=ReplyResponse,
+    dependencies=[Depends(verify_webhook_secret)],
+)
+def receive_gmail_send_result(
+    payload: GmailSendResult,
+    db: Annotated[Session, Depends(get_db)],
+):
+    row = db.execute(
+        select(Reply, Email, Thread.gmail_thread_id)
+        .join(Email, Reply.email_id == Email.id)
+        .join(Thread, Email.thread_id == Thread.id)
+        .where(
+            Reply.id == payload.reply_id,
+            Reply.user_id == payload.user_id,
+            Reply.email_id == payload.email_id,
+            Reply.idempotency_key == payload.idempotency_key,
+            Email.user_id == payload.user_id,
+            Thread.user_id == payload.user_id,
+        )
+        .with_for_update()
+    ).one_or_none()
+    if row is None:
+        raise HTTPException(status_code=404, detail="Reply request not found")
+
+    reply, email, expected_gmail_thread_id = row
+    if reply.dispatch_id != payload.dispatch_id:
+        raise HTTPException(status_code=409, detail="Stale Gmail dispatch result")
+    if reply.status == "pending":
+        raise HTTPException(status_code=409, detail="Reply request has not been dispatched")
+
+    if payload.status == "failed":
+        if reply.status != "sent":
+            reply.status = "failed"
+            reply.error_message = payload.error_message
+            db.commit()
+            db.refresh(reply)
+        return reply_response(reply, email.thread_id)
+
+    if payload.gmail_thread_id != expected_gmail_thread_id:
+        raise HTTPException(status_code=409, detail="Gmail thread does not match reply request")
+    if reply.status == "sent":
+        if reply.gmail_message_id != payload.gmail_message_id:
+            raise HTTPException(status_code=409, detail="Reply already completed with another Gmail ID")
+        return reply_response(reply, email.thread_id)
+
+    reply.status = "sent"
+    reply.gmail_message_id = payload.gmail_message_id
+    reply.sent_at = datetime.now(timezone.utc)
+    reply.error_message = None
+    email.status = "replied"
+    try:
+        db.commit()
+    except IntegrityError as error:
+        db.rollback()
+        raise HTTPException(status_code=409, detail="Gmail message already recorded") from error
+    db.refresh(reply)
+    return reply_response(reply, email.thread_id)
