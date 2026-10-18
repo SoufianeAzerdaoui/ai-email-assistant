@@ -7,7 +7,7 @@ from uuid import UUID, uuid4
 
 from sqlalchemy import (
     Boolean, CheckConstraint, DateTime, ForeignKey, ForeignKeyConstraint,
-    Integer, String, Text, UniqueConstraint, Uuid, func, text,
+    Index, Integer, String, Text, UniqueConstraint, Uuid, func, text,
 )
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -121,6 +121,42 @@ class Draft(Record, Base):
         back_populates="draft", foreign_keys="Reply.draft_id",
     )
 
+
+class DraftGeneration(Record, Base):
+    __tablename__ = "draft_generations"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["email_id", "user_id"], ["emails.id", "emails.user_id"],
+            name="fk_draft_generations_email_user",
+        ),
+        ForeignKeyConstraint(
+            ["draft_id", "email_id"], ["drafts.id", "drafts.email_id"],
+            name="fk_draft_generations_draft_email",
+        ),
+        CheckConstraint("tone IN ('formal', 'neutral', 'short')", name="tone"),
+        CheckConstraint(
+            "status IN ('pending', 'generating', 'ready', 'failed')", name="status"
+        ),
+        UniqueConstraint("draft_id", name="uq_draft_generations_draft_id"),
+        Index(
+            "uq_draft_generations_active",
+            "user_id",
+            "email_id",
+            "tone",
+            unique=True,
+            postgresql_where=text("status IN ('pending', 'generating')"),
+        ),
+    )
+
+    user_id: Mapped[UUID] = mapped_column(ForeignKey("users.id"), index=True)
+    email_id: Mapped[UUID] = mapped_column(Uuid, index=True)
+    draft_id: Mapped[UUID | None] = mapped_column(Uuid, index=True)
+    tone: Mapped[str] = mapped_column(String(16))
+    status: Mapped[str] = mapped_column(String(16), server_default="pending")
+    error_message: Mapped[str | None] = mapped_column(Text)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(),
+    )
 
 class Reply(Record, Base):
     __tablename__ = "replies"

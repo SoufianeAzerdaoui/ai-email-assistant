@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { AlertCircle, Check, Clock3, LoaderCircle, RefreshCw, Send, Save } from "lucide-react";
+import { AlertCircle, Check, Clock3, LoaderCircle, RefreshCw, Send, Save, Sparkles } from "lucide-react";
 import { useRouter } from "next/navigation";
 
 import { Button } from "@/components/ui/button";
@@ -12,7 +12,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import type { Draft, DraftTone, Reply, ReplyStatus } from "@/types/api";
+import type { Draft, DraftGeneration, DraftTone, Reply, ReplyStatus } from "@/types/api";
 
 type StoredRequest = {
   replyId?: string;
@@ -27,6 +27,9 @@ const statusDetails: Record<ReplyStatus, { label: string; className: string }> =
   sent: { label: "Envoyé", className: "border-emerald-200 bg-emerald-50 text-emerald-700" },
   failed: { label: "Échec", className: "border-red-200 bg-red-50 text-red-700" },
 };
+
+const GENERATION_POLL_INTERVAL_MS = 3000;
+const GENERATION_MAX_POLLS = 40;
 
 async function errorMessage(response: Response) {
   try {
@@ -50,6 +53,7 @@ export function ReplyComposer({ emailId }: { emailId: string }) {
   const [busy, setBusy] = useState(false);
   const [confirming, setConfirming] = useState(false);
   const [saved, setSaved] = useState(false);
+  const [generating, setGenerating] = useState(false);
   const [error, setError] = useState("");
 
   const draftStorageKey = `mailflow:draft:${emailId}`;
@@ -176,6 +180,64 @@ export function ReplyComposer({ emailId }: { emailId: string }) {
     });
   }
 
+  async function fetchGeneration(generationId: string) {
+    const response = await fetch(`/api/draft-generations/${encodeURIComponent(generationId)}`);
+    if (handleUnauthorized(response)) throw new Error("Votre session a expiré.");
+    if (!response.ok) throw new Error(await errorMessage(response));
+    return response.json() as Promise<DraftGeneration>;
+  }
+
+  async function loadGeneratedDraft(generation: DraftGeneration) {
+    if (!generation.draft_id) {
+      throw new Error("Le brouillon généré est indisponible.");
+    }
+    const response = await fetch(`/api/drafts/${encodeURIComponent(generation.draft_id)}`);
+    if (handleUnauthorized(response)) throw new Error("Votre session a expiré.");
+    if (!response.ok) throw new Error(await errorMessage(response));
+
+    const generatedDraft: Draft = await response.json();
+    setDraft(generatedDraft);
+    setBodyText(generatedDraft.body_text);
+    setTone(generatedDraft.tone);
+    setSaved(true);
+    window.localStorage.setItem(draftStorageKey, generatedDraft.id);
+  }
+
+  async function waitForGeneration(initialGeneration: DraftGeneration) {
+    let generation = initialGeneration;
+    for (let attempt = 0; attempt < GENERATION_MAX_POLLS; attempt += 1) {
+      if (generation.status === "ready") {
+        await loadGeneratedDraft(generation);
+        return;
+      }
+      if (generation.status === "failed") {
+        throw new Error(generation.error_message || "La génération du brouillon a échoué.");
+      }
+      await new Promise((resolve) => window.setTimeout(resolve, GENERATION_POLL_INTERVAL_MS));
+      generation = await fetchGeneration(generation.id);
+    }
+    throw new Error("La génération prend plus de temps que prévu. Réessayez dans un instant.");
+  }
+
+  function generateWithAi() {
+    if (requestLocked || busyRef.current) return;
+    void runOnce(async () => {
+      setGenerating(true);
+      try {
+        const response = await fetch(`/api/emails/${encodeURIComponent(emailId)}/draft/generate`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ tone }),
+        });
+        if (handleUnauthorized(response)) throw new Error("Votre session a expiré.");
+        if (!response.ok) throw new Error(await errorMessage(response));
+        await waitForGeneration(await response.json());
+      } finally {
+        setGenerating(false);
+      }
+    });
+  }
+
   async function submitReply(request: StoredRequest) {
     window.localStorage.setItem(replyStorageKey, JSON.stringify(request));
     setStoredRequest(request);
@@ -267,6 +329,10 @@ export function ReplyComposer({ emailId }: { emailId: string }) {
             </div>
             {!requestLocked ? (
               <div className="flex flex-wrap gap-2">
+                <Button type="button" variant="outline" onClick={generateWithAi} disabled={busy}>
+                  {generating ? <LoaderCircle className="size-4 animate-spin" /> : <Sparkles className="size-4" />}
+                  {generating ? "Génération…" : "Générer avec IA"}
+                </Button>
                 <Button type="button" variant="outline" onClick={saveDraft} disabled={busy || !bodyText.trim()}>
                   <Save className="size-4" /> Enregistrer
                 </Button>
@@ -278,6 +344,12 @@ export function ReplyComposer({ emailId }: { emailId: string }) {
           </div>
         </>
       )}
+
+      {generating ? (
+        <p role="status" className="mt-3 flex items-center gap-2 text-xs text-slate-500">
+          <LoaderCircle className="size-3.5 animate-spin" /> Gemini prépare un brouillon. Aucun e-mail ne sera envoyé.
+        </p>
+      ) : null}
 
       {confirming && !requestLocked ? (
         <div className="mt-4 rounded-md border border-blue-200 bg-blue-50 p-3">

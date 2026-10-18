@@ -45,6 +45,19 @@ export type Draft = {
   updated_at: string;
 };
 
+export type DraftGenerationStatus = "pending" | "generating" | "ready" | "failed";
+
+export type DraftGeneration = {
+  id: string;
+  email_id: string;
+  draft_id: string | null;
+  tone: DraftTone;
+  status: DraftGenerationStatus;
+  error_message: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
 export type ReplyStatus = "pending" | "sending" | "sent" | "failed";
 
 export type Reply = {

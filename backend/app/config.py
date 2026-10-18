@@ -4,6 +4,7 @@ import os
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
+from urllib.parse import urlparse
 
 from dotenv import load_dotenv
 
@@ -37,3 +38,28 @@ def get_webhook_secret() -> str:
     if len(secret) < 32:
         raise RuntimeError("WEBHOOK_SECRET must contain at least 32 characters")
     return secret
+
+
+@dataclass(frozen=True)
+class N8nDraftSettings:
+    webhook_url: str
+    webhook_secret: str
+    timeout_seconds: float
+
+
+@lru_cache
+def get_n8n_draft_settings() -> N8nDraftSettings:
+    webhook_url = os.environ.get("N8N_DRAFT_WEBHOOK_URL", "")
+    parsed_url = urlparse(webhook_url)
+    if parsed_url.scheme not in {"http", "https"} or not parsed_url.netloc:
+        raise RuntimeError("N8N_DRAFT_WEBHOOK_URL must be an HTTP(S) URL")
+    webhook_secret = os.environ.get("N8N_WEBHOOK_SECRET", "")
+    if len(webhook_secret) < 32:
+        raise RuntimeError("N8N_WEBHOOK_SECRET must contain at least 32 characters")
+    try:
+        timeout_seconds = float(os.environ.get("N8N_REQUEST_TIMEOUT_SECONDS", "10"))
+    except ValueError as error:
+        raise RuntimeError("N8N_REQUEST_TIMEOUT_SECONDS must be a number") from error
+    if timeout_seconds <= 0:
+        raise RuntimeError("N8N_REQUEST_TIMEOUT_SECONDS must be greater than zero")
+    return N8nDraftSettings(webhook_url, webhook_secret, timeout_seconds)
