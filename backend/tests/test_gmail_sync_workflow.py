@@ -40,6 +40,9 @@ class GmailSyncWorkflowTests(unittest.TestCase):
             "assignments"
         ]["assignments"]
         test_mode = next(item for item in assignments if item["name"] == "test_mode")
+        classify_in_test = next(
+            item for item in assignments if item["name"] == "classify_in_test_mode"
+        )
         test_list = self.nodes["Lister 50 IDs Gmail (TEST)"]["parameters"]
         query = {
             item["name"]: item["value"]
@@ -48,6 +51,7 @@ class GmailSyncWorkflowTests(unittest.TestCase):
 
         self.assertIs(test_mode["value"], True)
         self.assertEqual(test_mode["type"], "boolean")
+        self.assertIs(classify_in_test["value"], False)
         self.assertEqual(query["maxResults"], "50")
         self.assertNotIn("pagination", test_list["options"])
 
@@ -110,6 +114,10 @@ class GmailSyncWorkflowTests(unittest.TestCase):
         self.assertIn("test_mode: false", full_context)
         self.assertEqual(
             self.targets("Mode TEST ?", 1),
+            ["Réserver synchronisation FastAPI"],
+        )
+        self.assertEqual(
+            self.targets("Réserver synchronisation FastAPI", 0),
             ["Curseur présent ?"],
         )
         self.assertEqual(
@@ -218,6 +226,8 @@ class GmailSyncWorkflowTests(unittest.TestCase):
     def test_commit_aggregates_skips_only_after_completed_loop(self):
         sync = {
             "user_id": "11111111-1111-4111-8111-111111111111",
+            "execution_id": "22222222-2222-4222-8222-222222222222",
+            "idempotency_key": "gmail-sync:execution-1",
             "cursor_before": "10",
             "cursor_after": "20",
             "test_mode": False,
@@ -232,10 +242,11 @@ class GmailSyncWorkflowTests(unittest.TestCase):
             "const $execution = { id: 'execution-1' };",
         ))
         result = self.run_javascript("Préparer commit curseur", declarations)[0]["json"]
-        commit_body = self.nodes["Valider curseur FastAPI"]["parameters"]["body"]
+        commit_body = self.nodes["Valider curseur FastAPI"]["parameters"]["jsonBody"]
 
         self.assertEqual(result["imported_count"], 1)
         self.assertEqual(result["skipped_not_found"], 1)
+        self.assertEqual(result["execution_id"], sync["execution_id"])
         self.assertNotIn("skipped_not_found", commit_body)
         self.assertEqual(
             self.targets("Traiter un message à la fois", 0),
@@ -268,6 +279,73 @@ class GmailSyncWorkflowTests(unittest.TestCase):
         self.assertIs(self.workflow["active"], False)
         self.assertIs(self.nodes["Toutes les 10 minutes"]["disabled"], True)
         self.assertTrue(all("credentials" not in node for node in self.workflow["nodes"]))
+
+    def test_only_new_imports_dispatch_classification_and_errors_rejoin_loop(self):
+        message = {
+            "_sync": {"user_id": "user", "test_mode": False},
+            "gmail_message_id": "gmail-1",
+        }
+        task = {
+            "user_id": "11111111-1111-4111-8111-111111111111",
+            "email_id": "22222222-2222-4222-8222-222222222222",
+            "subject": "Facture",
+            "body": "Merci de traiter cette facture.",
+        }
+        declarations = "\n".join((
+            f"const message = {json.dumps(message)};",
+            "const $ = () => ({ item: { json: message } });",
+            f"const $json = {json.dumps({'imported_count': 1, 'classification_tasks': [task]})};",
+        ))
+        created = self.run_javascript("Conserver résultat import", declarations)[0]["json"]
+        duplicate_declarations = "\n".join((
+            f"const message = {json.dumps(message)};",
+            "const $ = () => ({ item: { json: message } });",
+            "const $json = { imported_count: 0, classification_tasks: [] };",
+        ))
+        duplicate = self.run_javascript(
+            "Conserver résultat import", duplicate_declarations
+        )[0]["json"]
+
+        self.assertEqual(created["classification_task"], task)
+        self.assertIsNone(duplicate["classification_task"])
+        self.assertEqual(
+            self.targets("Conserver résultat import", 0),
+            ["Classification nécessaire ?"],
+        )
+        self.assertEqual(
+            self.targets("Classification nécessaire ?", 0),
+            ["Déclencher classification IA"],
+        )
+        self.assertEqual(
+            self.targets("Classification nécessaire ?", 1),
+            ["Attendre 2,5 secondes"],
+        )
+        self.assertTrue(self.nodes["Déclencher classification IA"]["continueOnFail"])
+        self.assertEqual(
+            self.targets("Journaliser échec classification", 0),
+            ["Restaurer résultat import"],
+        )
+        self.assertEqual(
+            self.targets("Restaurer résultat import", 0),
+            ["Attendre 2,5 secondes"],
+        )
+
+    def test_normal_sync_uses_backend_lease_and_production_classification_webhook(self):
+        claim = self.nodes["Réserver synchronisation FastAPI"]
+        dispatch = self.nodes["Déclencher classification IA"]
+        prepare_history = self.nodes["Préparer historique Gmail"]["parameters"]["jsCode"]
+        prepare_full = self.nodes["Préparer liste complète"]["parameters"]["jsCode"]
+
+        self.assertIn("/gmail/sync-state/claim", claim["parameters"]["url"])
+        self.assertIn("gmail-sync:${$execution.id}", claim["parameters"]["jsonBody"])
+        self.assertIn("Réserver synchronisation FastAPI", prepare_history)
+        self.assertIn("execution_id", prepare_history)
+        self.assertIn("Réserver synchronisation FastAPI", prepare_full)
+        self.assertEqual(
+            dispatch["parameters"]["url"],
+            "http://127.0.0.1:5678/webhook/classification",
+        )
+        self.assertNotIn("webhook-test", dispatch["parameters"]["url"])
 
 
 if __name__ == "__main__":

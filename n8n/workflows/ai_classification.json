@@ -11,31 +11,48 @@
     },
     {
       "parameters": {
+        "httpMethod": "POST",
+        "path": "classification",
+        "authentication": "headerAuth",
+        "responseMode": "onReceived",
+        "options": {}
+      },
+      "id": "classification-webhook",
+      "name": "Recevoir classification",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.2,
+      "position": [-1040, 280],
+      "webhookId": "mailflow-classification",
+      "notesInFlow": true,
+      "notes": "Credential requis : \"Mailflow - Entrée n8n\", Header Auth X-Webhook-Secret = N8N_WEBHOOK_SECRET. Utiliser uniquement l'URL de production /webhook/classification."
+    },
+    {
+      "parameters": {
         "assignments": {
           "assignments": [
             {
               "id": "input-user-id",
               "name": "user_id",
               "type": "string",
-              "value": "={{ $json.user_id ?? '' }}"
+              "value": "={{ $json.body?.user_id ?? $json.user_id ?? '' }}"
             },
             {
               "id": "input-email-id",
               "name": "email_id",
               "type": "string",
-              "value": "={{ $json.email_id ?? '' }}"
+              "value": "={{ $json.body?.email_id ?? $json.email_id ?? '' }}"
             },
             {
               "id": "input-subject",
               "name": "subject",
               "type": "string",
-              "value": "={{ $json.subject ?? '' }}"
+              "value": "={{ $json.body?.subject ?? $json.subject ?? '' }}"
             },
             {
               "id": "input-body",
               "name": "body",
               "type": "string",
-              "value": "={{ $json.body ?? '' }}"
+              "value": "={{ $json.body?.body ?? $json.body ?? '' }}"
             }
           ]
         },
@@ -79,10 +96,11 @@
       "typeVersion": 1.9,
       "position": [-352, 120],
       "retryOnFail": true,
-      "maxTries": 3,
+      "maxTries": 2,
       "waitBetweenTries": 5000,
+      "continueOnFail": true,
       "notesInFlow": true,
-      "notes": "Les erreurs temporaires du modèle, notamment 429 et 503, sont retentées après une attente."
+      "notes": "Une erreur temporaire, notamment 429, 503 ou timeout, est retentée une fois après 5 secondes puis transmise à la tentative de correction."
     },
     {
       "parameters": {
@@ -161,10 +179,11 @@
       "typeVersion": 1.9,
       "position": [384, 248],
       "retryOnFail": true,
-      "maxTries": 3,
-      "waitBetweenTries": 5000,
+      "maxTries": 2,
+      "waitBetweenTries": 10000,
+      "continueOnFail": true,
       "notesInFlow": true,
-      "notes": "Une seule nouvelle génération est effectuée lorsque le premier JSON est invalide."
+      "notes": "Une seule correction logique est effectuée. Une erreur temporaire est retentée une fois après 10 secondes, formant un backoff borné 5 s puis 10 s."
     },
     {
       "parameters": {
@@ -209,7 +228,7 @@
     },
     {
       "parameters": {
-        "jsCode": "return $input.all().map(() => ({\n  json: {\n    classification: {\n      category: 'autre',\n      priority: 2,\n      summary: 'Classification automatique indisponible ; vérification manuelle requise.',\n      expected_action: 'Vérifier manuellement la catégorie, la priorité et l’action attendue.',\n      needs_review: true,\n    },\n  },\n}));"
+        "jsCode": "let geminiUnavailable = false;\ntry {\n  geminiUnavailable = Boolean(\n    $('Classification Gemini').item.json.error ||\n    $('Nouvelle tentative Gemini').item.json.error\n  );\n} catch {}\nreturn $input.all().map(() => ({\n  json: {\n    classification: {\n      category: 'autre',\n      priority: 2,\n      summary: 'Classification automatique indisponible ; vérification manuelle requise.',\n      expected_action: 'Vérifier manuellement la catégorie, la priorité et l’action attendue.',\n      needs_review: true,\n    },\n    error_type: geminiUnavailable ? 'gemini_unavailable' : 'invalid_gemini_output',\n  },\n}));"
       },
       "id": "classification-fallback",
       "name": "Fallback à vérifier",
@@ -224,10 +243,10 @@
         "authentication": "genericCredentialType",
         "genericAuthType": "httpHeaderAuth",
         "sendBody": true,
-        "contentType": "raw",
-        "rawContentType": "application/json",
-        "body": "={{ JSON.stringify({ user_id: $('Entrée classification').item.json.user_id, email_id: $('Entrée classification').item.json.email_id, category: $json.classification.category, priority: $json.classification.priority, summary: $json.classification.summary, expected_action: $json.classification.expected_action, needs_review: $json.classification.needs_review }) }}",
-        "options": {}
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{ { user_id: $('Entrée classification').item.json.user_id, email_id: $('Entrée classification').item.json.email_id, category: $json.classification.category, priority: $json.classification.priority, summary: $json.classification.summary, expected_action: $json.classification.expected_action, needs_review: $json.classification.needs_review } }}",
+        "options": {"timeout": 30000}
       },
       "id": "post-classification",
       "name": "Enregistrer classification",
@@ -237,12 +256,59 @@
       "retryOnFail": true,
       "maxTries": 3,
       "waitBetweenTries": 5000,
+      "continueOnFail": true,
       "notesInFlow": true,
-      "notes": "Après import, sélectionner un credential HTTP Header Auth contenant le nom X-Webhook-Secret et sa valeur secrète. Aucun secret n'est exporté. BACKEND_URL provient de l'environnement Docker n8n."
+      "notes": "Credential requis : \"Mailflow - Vers FastAPI\", Header Auth X-Webhook-Secret = WEBHOOK_SECRET. Trois tentatives maximum ; l'échec final est journalisé sans relancer Gemini ni Gmail Sync."
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {"caseSensitive": true, "leftValue": "", "typeValidation": "strict", "version": 2},
+          "conditions": [{
+            "id": "classification-callback-ok",
+            "leftValue": "={{ $json.error === undefined }}",
+            "rightValue": true,
+            "operator": {"type": "boolean", "operation": "true", "singleValue": true}
+          }],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "classification-callback-ok",
+      "name": "Callback classification réussi ?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [1584, 120]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.BACKEND_URL }}/internal/webhooks/workflow-errors",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "contentType": "raw",
+        "rawContentType": "application/json",
+        "body": "={{ JSON.stringify({ user_id: $('Entrée classification').item.json.user_id, email_id: $('Entrée classification').item.json.email_id, idempotency_key: `classification:${$('Entrée classification').item.json.email_id}:${$json.error_type ?? 'classification_callback_failed'}`, workflow_name: 'Mailflow - Classification IA', node_name: $json.error_type ? 'Fallback à vérifier' : 'Enregistrer classification', error_type: $json.error_type ?? 'classification_callback_failed', status_code: Number($json.statusCode ?? $json.error?.httpCode ?? 0) || null, attempt: $json.error_type ? 2 : 3 }) }}",
+        "options": {"timeout": 30000}
+      },
+      "id": "log-classification-error",
+      "name": "Journaliser erreur classification",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [1584, 376],
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 5000,
+      "notesInFlow": true,
+      "notes": "Credential requis : \"Mailflow - Vers FastAPI\". Le payload contient uniquement des codes et identifiants techniques, jamais la réponse brute Gemini ni un secret."
     }
   ],
   "connections": {
     "Déclenchement manuel": {
+      "main": [[{"node": "Entrée classification", "type": "main", "index": 0}]]
+    },
+    "Recevoir classification": {
       "main": [[{"node": "Entrée classification", "type": "main", "index": 0}]]
     },
     "Entrée classification": {
@@ -282,7 +348,16 @@
       ]
     },
     "Fallback à vérifier": {
-      "main": [[{"node": "Enregistrer classification", "type": "main", "index": 0}]]
+      "main": [[
+        {"node": "Enregistrer classification", "type": "main", "index": 0},
+        {"node": "Journaliser erreur classification", "type": "main", "index": 0}
+      ]]
+    },
+    "Enregistrer classification": {
+      "main": [[{"node": "Callback classification réussi ?", "type": "main", "index": 0}]]
+    },
+    "Callback classification réussi ?": {
+      "main": [[], [{"node": "Journaliser erreur classification", "type": "main", "index": 0}]]
     }
   },
   "pinData": {},

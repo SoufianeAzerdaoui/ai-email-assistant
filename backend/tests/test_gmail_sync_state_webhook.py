@@ -61,9 +61,22 @@ class GmailSyncStateWebhookTests(unittest.TestCase):
             headers=self.headers if headers is None else headers,
         )
 
+    def claim(self, **overrides):
+        payload = {
+            "user_id": str(self.user.id),
+            "idempotency_key": "gmail-sync-run-1",
+            **overrides,
+        }
+        return self.client.post(
+            "/internal/webhooks/gmail/sync-state/claim",
+            headers=self.headers,
+            json=payload,
+        )
+
     def commit(self, **overrides):
         payload = {
             "user_id": str(self.user.id),
+            "execution_id": str(uuid4()),
             "cursor_before": None,
             "cursor_after": "gmail-history-100",
             "idempotency_key": "gmail-sync-run-1",
@@ -85,7 +98,9 @@ class GmailSyncStateWebhookTests(unittest.TestCase):
             "last_synced_at": None,
         })
 
-        response = self.commit()
+        claim = self.claim()
+        self.assertEqual(claim.status_code, 200)
+        response = self.commit(execution_id=claim.json()["execution_id"])
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["cursor"], "gmail-history-100")
@@ -99,8 +114,9 @@ class GmailSyncStateWebhookTests(unittest.TestCase):
         self.assertEqual(execution.cursor_after, "gmail-history-100")
 
     def test_commit_is_idempotent(self):
-        first = self.commit()
-        second = self.commit()
+        claim = self.claim()
+        first = self.commit(execution_id=claim.json()["execution_id"])
+        second = self.commit(execution_id=claim.json()["execution_id"])
 
         self.assertEqual(first.status_code, 200)
         self.assertEqual(second.status_code, 200)
@@ -112,14 +128,23 @@ class GmailSyncStateWebhookTests(unittest.TestCase):
         ), 1)
 
     def test_advances_only_from_current_cursor(self):
-        self.assertEqual(self.commit().status_code, 200)
+        first_claim = self.claim()
+        self.assertEqual(
+            self.commit(execution_id=first_claim.json()["execution_id"]).status_code,
+            200,
+        )
+        advanced_claim = self.claim(idempotency_key="gmail-sync-run-2")
         advanced = self.commit(
+            execution_id=advanced_claim.json()["execution_id"],
             cursor_before="gmail-history-100",
             cursor_after="gmail-history-150",
             idempotency_key="gmail-sync-run-2",
             imported_count=3,
         )
+        stale_claim = self.claim(idempotency_key="gmail-sync-run-stale")
+        self.assertEqual(stale_claim.status_code, 200)
         stale = self.commit(
+            execution_id=stale_claim.json()["execution_id"],
             cursor_before="gmail-history-100",
             cursor_after="gmail-history-175",
             idempotency_key="gmail-sync-run-stale",
@@ -131,13 +156,20 @@ class GmailSyncStateWebhookTests(unittest.TestCase):
         self.assertEqual(self.session.get(SyncState, self.user.id).cursor, "gmail-history-150")
         self.assertEqual(self.session.scalar(
             select(func.count()).select_from(SyncExecution).where(
-                SyncExecution.user_id == self.user.id
+                SyncExecution.user_id == self.user.id,
+                SyncExecution.status == "succeeded",
             )
         ), 2)
 
     def test_rejects_reused_key_with_different_data(self):
-        self.assertEqual(self.commit().status_code, 200)
-        response = self.commit(imported_count=13)
+        claim = self.claim()
+        self.assertEqual(
+            self.commit(execution_id=claim.json()["execution_id"]).status_code,
+            200,
+        )
+        response = self.commit(
+            execution_id=claim.json()["execution_id"], imported_count=13
+        )
 
         self.assertEqual(response.status_code, 409)
         self.assertEqual(self.session.get(SyncState, self.user.id).cursor, "gmail-history-100")
@@ -150,7 +182,11 @@ class GmailSyncStateWebhookTests(unittest.TestCase):
         self.assertEqual(response.status_code, 404)
 
     def test_state_is_isolated_by_user(self):
-        self.assertEqual(self.commit().status_code, 200)
+        claim = self.claim()
+        self.assertEqual(
+            self.commit(execution_id=claim.json()["execution_id"]).status_code,
+            200,
+        )
         other = self.get_state(user_id=self.other_user.id)
 
         self.assertEqual(other.status_code, 200)
@@ -161,3 +197,19 @@ class GmailSyncStateWebhookTests(unittest.TestCase):
         self.assertEqual(self.commit(idempotency_key=" ").status_code, 422)
         self.assertEqual(self.commit(imported_count=-1).status_code, 422)
         self.assertIsNone(self.session.get(SyncState, self.user.id))
+
+    def test_claim_prevents_concurrent_normal_syncs(self):
+        first = self.claim(idempotency_key="gmail-sync-concurrent-1")
+        replay = self.claim(idempotency_key="gmail-sync-concurrent-1")
+        concurrent = self.claim(idempotency_key="gmail-sync-concurrent-2")
+
+        self.assertEqual(first.status_code, 200)
+        self.assertEqual(replay.status_code, 200)
+        self.assertEqual(replay.json()["execution_id"], first.json()["execution_id"])
+        self.assertEqual(concurrent.status_code, 409)
+        self.assertEqual(self.session.scalar(
+            select(func.count()).select_from(SyncExecution).where(
+                SyncExecution.user_id == self.user.id,
+                SyncExecution.status == "running",
+            )
+        ), 1)

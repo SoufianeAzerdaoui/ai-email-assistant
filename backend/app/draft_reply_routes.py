@@ -81,6 +81,18 @@ def owned_draft(db: Session, user_id: UUID, draft_id: UUID) -> Draft:
     return draft
 
 
+def original_thread_email(db: Session, user_id: UUID, thread_id: UUID) -> Email:
+    email = db.scalar(
+        select(Email)
+        .where(Email.thread_id == thread_id, Email.user_id == user_id)
+        .order_by(Email.received_at, Email.created_at, Email.id)
+        .limit(1)
+    )
+    if email is None:  # The selected email itself normally guarantees this row exists.
+        raise HTTPException(status_code=409, detail="Original thread email not found")
+    return email
+
+
 @router.post("/emails/{id}/draft", response_model=DraftResponse, status_code=201)
 def create_draft(
     id: UUID,
@@ -194,16 +206,17 @@ def create_reply_request(
         thread = db.get(Thread, email.thread_id)
         if thread is None:  # Protected by the email foreign key; kept defensive.
             raise HTTPException(status_code=409, detail="Email thread not found")
+        original_email = original_thread_email(db, current_user.id, email.thread_id)
         dispatch_payload: GmailReplyDispatch = {
             "reply_id": str(reply.id),
             "dispatch_id": str(dispatch_id),
             "user_id": str(current_user.id),
             "email_id": str(email.id),
             "idempotency_key": reply.idempotency_key,
-            "gmail_message_id": email.gmail_message_id,
+            "gmail_message_id": original_email.gmail_message_id,
             "gmail_thread_id": thread.gmail_thread_id,
-            "rfc_message_id": email.message_id,
-            "recipient": email.sender,
+            "rfc_message_id": original_email.message_id,
+            "recipient": original_email.sender,
             "subject": email.subject,
             "body_text": reply.body_text,
         }

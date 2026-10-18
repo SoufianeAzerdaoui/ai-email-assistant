@@ -88,11 +88,11 @@
         "method": "POST",
         "url": "https://gmail.googleapis.com/gmail/v1/users/me/messages/send",
         "authentication": "predefinedCredentialType",
-        "nodeCredentialType": "gmailOAuth2Api",
+        "nodeCredentialType": "gmailOAuth2",
         "sendBody": true,
-        "contentType": "raw",
-        "rawContentType": "application/json",
-        "body": "={{ JSON.stringify({ raw: $json.raw, threadId: $json.gmail_thread_id }) }}",
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{ { raw: $json.raw, threadId: $json.gmail_thread_id } }}",
         "options": {
           "response": {
             "response": {
@@ -127,11 +127,11 @@
       ],
       "continueOnFail": true,
       "notesInFlow": true,
-      "notes": "Sélectionner le credential Gmail OAuth2 existant. La réponse est demandée en JSON sans compression pour éviter l'objet de flux technique observé. Aucun retry automatique sur messages.send : une réponse perdue après acceptation par Gmail pourrait produire un doublon."
+      "notes": "Sélectionner le credential Gmail OAuth2 existant. Le corps doit rester configuré en JSON : avec Raw, n8n 2.43 force une réponse en flux et masque id/threadId. Aucun retry automatique sur messages.send : une réponse perdue après acceptation par Gmail pourrait produire un doublon."
     },
     {
       "parameters": {
-        "jsCode": "const request = $('Préparer message MIME').item.json;\nconst statusCode = Number($json.statusCode ?? 0);\nconst isRecord = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);\nlet responseBody = {};\nif (isRecord($json.body) && !('_readableState' in $json.body) && !('_outBuffer' in $json.body)) {\n  responseBody = $json.body;\n} else if (typeof $json.body === 'string') {\n  try {\n    const parsed = JSON.parse($json.body);\n    if (isRecord(parsed)) responseBody = parsed;\n  } catch {\n    responseBody = {};\n  }\n} else if (typeof $json.id === 'string') {\n  responseBody = $json;\n}\n\nconst gmailMessageId = typeof responseBody.id === 'string' ? responseBody.id.trim() : '';\nconst responseThreadId = typeof responseBody.threadId === 'string' ? responseBody.threadId.trim() : '';\nconst gmailThreadId = responseThreadId || request.gmail_thread_id;\nconst confirmedSent = statusCode >= 200 && statusCode < 300 &&\n  gmailMessageId.length > 0 && gmailMessageId.length <= 255;\n\nconst base = {\n  reply_id: request.reply_id,\n  dispatch_id: request.dispatch_id,\n  user_id: request.user_id,\n  email_id: request.email_id,\n  idempotency_key: request.idempotency_key\n};\n\nif (confirmedSent) {\n  return [{ json: {\n    ...base,\n    callback_allowed: true,\n    status: 'sent',\n    gmail_message_id: gmailMessageId,\n    gmail_thread_id: gmailThreadId\n  } }];\n}\n\nif (statusCode >= 400 && statusCode < 500 && statusCode !== 408) {\n  return [{ json: {\n    ...base,\n    callback_allowed: true,\n    status: 'failed',\n    error_message: 'Gmail API a refusé la requête (HTTP ' + statusCode + ').'\n  } }];\n}\n\nreturn [{ json: {\n  ...base,\n  callback_allowed: false,\n  status: 'ambiguous',\n  error_message: 'Résultat Gmail ambigu. Aucun nouvel envoi ne doit être tenté automatiquement.'\n} }];"
+        "jsCode": "const request = $('Préparer message MIME').item.json;\nconst hasStatusCode = $json.statusCode !== undefined && $json.statusCode !== null;\nconst statusCode = hasStatusCode ? Number($json.statusCode) : null;\nconst isRecord = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);\nlet responseBody = {};\nif (isRecord($json.body) && !('_readableState' in $json.body) && !('_outBuffer' in $json.body)) {\n  responseBody = $json.body;\n} else if (typeof $json.body === 'string') {\n  try {\n    const parsed = JSON.parse($json.body);\n    if (isRecord(parsed)) responseBody = parsed;\n  } catch {\n    responseBody = {};\n  }\n} else if (typeof $json.id === 'string') {\n  responseBody = $json;\n}\n\nconst gmailMessageId = typeof responseBody.id === 'string' ? responseBody.id.trim() : '';\nconst responseThreadId = typeof responseBody.threadId === 'string' ? responseBody.threadId.trim() : '';\nconst gmailThreadId = responseThreadId || request.gmail_thread_id;\nconst successfulHttpStatus = !hasStatusCode || (statusCode >= 200 && statusCode < 300);\nconst confirmedSent = successfulHttpStatus &&\n  gmailMessageId.length > 0 && gmailMessageId.length <= 255;\n\nconst base = {\n  reply_id: request.reply_id,\n  dispatch_id: request.dispatch_id,\n  user_id: request.user_id,\n  email_id: request.email_id,\n  idempotency_key: request.idempotency_key\n};\n\nif (confirmedSent) {\n  return [{ json: {\n    ...base,\n    callback_allowed: true,\n    status: 'sent',\n    gmail_message_id: gmailMessageId,\n    gmail_thread_id: gmailThreadId\n  } }];\n}\n\nif (hasStatusCode && statusCode >= 400 && statusCode < 500 && statusCode !== 408) {\n  return [{ json: {\n    ...base,\n    callback_allowed: true,\n    status: 'failed',\n    error_message: 'Gmail API a refusé la requête (HTTP ' + statusCode + ').'\n  } }];\n}\n\nreturn [{ json: {\n  ...base,\n  callback_allowed: false,\n  status: 'ambiguous',\n  error_message: 'Résultat Gmail ambigu. Aucun nouvel envoi ne doit être tenté automatiquement.'\n} }];"
       },
       "id": "prepare-gmail-result",
       "name": "Préparer résultat Gmail",

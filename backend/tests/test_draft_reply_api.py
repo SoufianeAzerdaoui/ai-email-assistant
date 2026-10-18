@@ -4,7 +4,7 @@ import os
 import unittest
 import warnings
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from unittest.mock import patch
 from uuid import uuid4
 
@@ -199,6 +199,43 @@ class DraftReplyApiTests(unittest.TestCase):
             headers=self.headers,
         )
         self.assertEqual(conflict.status_code, 409)
+
+    def test_reply_to_imported_outgoing_message_targets_original_sender(self):
+        outgoing = Email(
+            user_id=self.user.id,
+            thread_id=self.thread.id,
+            gmail_message_id=f"sent-{uuid4()}",
+            message_id=f"<sent-{uuid4()}@example.test>",
+            sender=self.user.email,
+            recipients=[self.email.sender],
+            subject=self.email.subject,
+            body_text="Message sortant importé",
+            received_at=self.email.received_at + timedelta(minutes=1),
+            status="replied",
+            category="client",
+            priority=3,
+        )
+        self.session.add(outgoing)
+        self.session.commit()
+
+        created = self.client.post(
+            f"/emails/{outgoing.id}/reply",
+            json={
+                "confirmed": True,
+                "idempotency_key": "reply-to-original-sender",
+                "body_text": "Réponse au contact externe",
+            },
+            headers=self.headers,
+        )
+
+        self.assertEqual(created.status_code, 201)
+        dispatched = self.dispatch.call_args.args[0]
+        self.assertEqual(dispatched["email_id"], str(outgoing.id))
+        self.assertEqual(dispatched["recipient"], self.email.sender)
+        self.assertNotEqual(dispatched["recipient"], outgoing.sender)
+        self.assertEqual(dispatched["gmail_message_id"], self.email.gmail_message_id)
+        self.assertEqual(dispatched["rfc_message_id"], self.email.message_id)
+        self.assertEqual(dispatched["gmail_thread_id"], self.thread.gmail_thread_id)
 
     def test_reply_requires_confirmation_key_and_content(self):
         base_url = f"/emails/{self.email.id}/reply"

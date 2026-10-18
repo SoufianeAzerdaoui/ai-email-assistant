@@ -64,6 +64,13 @@ class GmailImportRequest(BaseModel):
         return self
 
 
+class ClassificationTask(BaseModel):
+    user_id: UUID
+    email_id: UUID
+    subject: str
+    body: str
+
+
 class GmailImportResponse(BaseModel):
     user_id: UUID
     received_count: int
@@ -71,6 +78,29 @@ class GmailImportResponse(BaseModel):
     duplicate_count: int
     repaired_count: int
     created_thread_count: int
+    classification_tasks: list[ClassificationTask] = Field(default_factory=list)
+
+
+class GmailSyncClaimRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    user_id: UUID
+    idempotency_key: str = Field(min_length=1, max_length=255)
+
+    @field_validator("idempotency_key")
+    @classmethod
+    def normalize_claim_key(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("value must not be blank")
+        return value
+
+
+class GmailSyncClaimResponse(BaseModel):
+    execution_id: UUID
+    user_id: UUID
+    cursor: str | None
+    last_synced_at: datetime | None
 
 
 class GmailSyncStateResponse(BaseModel):
@@ -83,6 +113,7 @@ class GmailSyncCommitRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     user_id: UUID
+    execution_id: UUID
     cursor_before: str | None = Field(default=None, max_length=2_000)
     cursor_after: str = Field(min_length=1, max_length=2_000)
     idempotency_key: str = Field(min_length=1, max_length=255)

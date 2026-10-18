@@ -89,7 +89,9 @@ class GmailImportWebhookTests(unittest.TestCase):
         response = self.post()
 
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.json(), {
+        data = response.json()
+        tasks = data.pop("classification_tasks")
+        self.assertEqual(data, {
             "user_id": str(self.user.id),
             "received_count": 2,
             "imported_count": 2,
@@ -115,6 +117,12 @@ class GmailImportWebhookTests(unittest.TestCase):
         self.assertEqual(emails[0].recipients, [self.user.email, "archive@example.test"])
         self.assertEqual(emails[0].body_text, "Contenu de Premier message")
         self.assertEqual(emails[0].received_at, datetime(2026, 10, 17, 6, 30, tzinfo=timezone.utc))
+        self.assertEqual([task["email_id"] for task in tasks], [str(email.id) for email in emails])
+        self.assertEqual([task["user_id"] for task in tasks], [str(self.user.id)] * 2)
+        self.assertEqual([task["subject"] for task in tasks], [
+            "Premier message", "Re: Premier message",
+        ])
+        self.assertEqual([task["body"] for task in tasks], [email.body_text for email in emails])
 
     def test_reimport_is_idempotent(self):
         first = self.post()
@@ -126,6 +134,7 @@ class GmailImportWebhookTests(unittest.TestCase):
         self.assertEqual(second.json()["duplicate_count"], 2)
         self.assertEqual(second.json()["repaired_count"], 0)
         self.assertEqual(second.json()["created_thread_count"], 0)
+        self.assertEqual(second.json()["classification_tasks"], [])
         self.assertEqual(self.session.scalar(
             select(func.count()).select_from(Email).where(Email.user_id == self.user.id)
         ), 2)

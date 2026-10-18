@@ -57,7 +57,7 @@ class GmailSendWorkflowTests(unittest.TestCase):
         )
 
         gmail = self.nodes["Envoyer réponse Gmail"]
-        self.assertEqual(gmail["parameters"]["nodeCredentialType"], "gmailOAuth2Api")
+        self.assertEqual(gmail["parameters"]["nodeCredentialType"], "gmailOAuth2")
         self.assertIn("/gmail/v1/users/me/messages/send", gmail["parameters"]["url"])
         self.assertNotIn("retryOnFail", gmail)
         headers = {
@@ -69,6 +69,10 @@ class GmailSendWorkflowTests(unittest.TestCase):
         response_options = gmail["parameters"]["options"]["response"]["response"]
         self.assertEqual(response_options["responseFormat"], "json")
         self.assertTrue(response_options["fullResponse"])
+        self.assertEqual(gmail["parameters"]["contentType"], "json")
+        self.assertEqual(gmail["parameters"]["specifyBody"], "json")
+        self.assertNotIn("rawContentType", gmail["parameters"])
+        self.assertNotIn("body", gmail["parameters"])
 
         callback = self.nodes["Callback FastAPI"]
         self.assertEqual(callback["parameters"]["genericAuthType"], "httpHeaderAuth")
@@ -90,7 +94,7 @@ class GmailSendWorkflowTests(unittest.TestCase):
         self.assertIn("In-Reply-To", mime_code)
         self.assertIn("References", mime_code)
         self.assertIn("mailflow-' + request.reply_id", mime_code)
-        gmail_body = self.nodes["Envoyer réponse Gmail"]["parameters"]["body"]
+        gmail_body = self.nodes["Envoyer réponse Gmail"]["parameters"]["jsonBody"]
         self.assertIn("threadId", gmail_body)
 
     def test_http_200_with_gmail_id_is_sent(self):
@@ -109,6 +113,17 @@ class GmailSendWorkflowTests(unittest.TestCase):
         self.assertEqual(result["reply_id"], "11111111-1111-4111-8111-111111111111")
         self.assertEqual(result["dispatch_id"], "22222222-2222-4222-8222-222222222222")
         self.assertEqual(result["idempotency_key"], "send-test-1")
+
+    def test_direct_gmail_json_with_id_is_sent(self):
+        result = self.prepare_result({
+            "id": "gmail-direct-id",
+            "threadId": "gmail-direct-thread",
+            "labelIds": ["SENT"],
+        })
+        self.assertTrue(result["callback_allowed"])
+        self.assertEqual(result["status"], "sent")
+        self.assertEqual(result["gmail_message_id"], "gmail-direct-id")
+        self.assertEqual(result["gmail_thread_id"], "gmail-direct-thread")
 
     def test_http_error_is_failed_and_can_reach_callback(self):
         result = self.prepare_result({"statusCode": 400, "body": {"error": "invalid"}})

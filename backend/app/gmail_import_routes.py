@@ -1,6 +1,6 @@
 """Internal, idempotent Gmail ingestion and synchronization state for n8n."""
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Annotated
 from uuid import UUID
 
@@ -15,6 +15,8 @@ from app.email_content import legacy_html_to_readable_text, readable_email_body
 from app.gmail_import_schemas import (
     GmailImportRequest,
     GmailImportResponse,
+    GmailSyncClaimRequest,
+    GmailSyncClaimResponse,
     GmailSyncCommitRequest,
     GmailSyncCommitResponse,
     GmailSyncStateResponse,
@@ -23,6 +25,72 @@ from app.models import Email, SyncExecution, SyncState, Thread, User
 
 
 router = APIRouter(prefix="/internal/webhooks", tags=["internal"])
+
+SYNC_LEASE = timedelta(minutes=30)
+
+
+@router.post(
+    "/gmail/sync-state/claim",
+    response_model=GmailSyncClaimResponse,
+    dependencies=[Depends(verify_webhook_secret)],
+)
+def claim_gmail_sync(
+    payload: GmailSyncClaimRequest,
+    db: Annotated[Session, Depends(get_db)],
+):
+    user = db.scalar(select(User).where(User.id == payload.user_id).with_for_update())
+    if user is None:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    existing = db.scalar(select(SyncExecution).where(
+        SyncExecution.user_id == payload.user_id,
+        SyncExecution.idempotency_key == payload.idempotency_key,
+    ))
+    state = db.get(SyncState, payload.user_id)
+    if existing is not None:
+        if existing.status != "running":
+            raise HTTPException(status_code=409, detail="Sync execution is no longer running")
+        return GmailSyncClaimResponse(
+            execution_id=existing.id,
+            user_id=payload.user_id,
+            cursor=existing.cursor_before,
+            last_synced_at=state.last_synced_at if state else None,
+        )
+
+    now = datetime.now(timezone.utc)
+    running = db.scalar(
+        select(SyncExecution)
+        .where(
+            SyncExecution.user_id == payload.user_id,
+            SyncExecution.status == "running",
+        )
+        .order_by(SyncExecution.started_at.desc())
+        .with_for_update()
+    )
+    if running is not None:
+        started_at = running.started_at
+        if started_at.tzinfo is None:
+            started_at = started_at.replace(tzinfo=timezone.utc)
+        if started_at >= now - SYNC_LEASE:
+            raise HTTPException(status_code=409, detail="A Gmail sync is already running")
+        running.status = "failed"
+        running.finished_at = now
+
+    execution = SyncExecution(
+        user_id=payload.user_id,
+        idempotency_key=payload.idempotency_key,
+        status="running",
+        cursor_before=state.cursor if state else None,
+    )
+    db.add(execution)
+    db.commit()
+    db.refresh(execution)
+    return GmailSyncClaimResponse(
+        execution_id=execution.id,
+        user_id=payload.user_id,
+        cursor=execution.cursor_before,
+        last_synced_at=state.last_synced_at if state else None,
+    )
 
 
 @router.get(
@@ -62,14 +130,17 @@ def commit_gmail_sync_state(
 
     existing = db.scalar(
         select(SyncExecution).where(
+            SyncExecution.id == payload.execution_id,
             SyncExecution.user_id == payload.user_id,
-            SyncExecution.idempotency_key == payload.idempotency_key,
-        )
+        ).with_for_update()
     )
-    if existing is not None:
+    if existing is None:
+        raise HTTPException(status_code=404, detail="Sync execution not found")
+    if existing.idempotency_key != payload.idempotency_key:
+        raise HTTPException(status_code=409, detail="Sync execution key mismatch")
+    if existing.status == "succeeded":
         same_commit = (
-            existing.status == "succeeded"
-            and existing.cursor_before == payload.cursor_before
+            existing.cursor_before == payload.cursor_before
             and existing.cursor_after == payload.cursor_after
             and existing.imported_count == payload.imported_count
         )
@@ -85,6 +156,8 @@ def commit_gmail_sync_state(
             execution_id=existing.id,
             imported_count=existing.imported_count,
         )
+    if existing.status != "running":
+        raise HTTPException(status_code=409, detail="Sync execution is not running")
 
     state = db.get(SyncState, payload.user_id)
     current_cursor = state.cursor if state else None
@@ -92,29 +165,24 @@ def commit_gmail_sync_state(
         raise HTTPException(status_code=409, detail="Gmail sync cursor has changed")
 
     completed_at = datetime.now(timezone.utc)
-    execution = SyncExecution(
-        user_id=payload.user_id,
-        idempotency_key=payload.idempotency_key,
-        status="succeeded",
-        finished_at=completed_at,
-        cursor_before=payload.cursor_before,
-        cursor_after=payload.cursor_after,
-        imported_count=payload.imported_count,
-    )
-    db.add(execution)
-    db.flush()
+    if existing.cursor_before != payload.cursor_before:
+        raise HTTPException(status_code=409, detail="Sync execution cursor mismatch")
+    existing.status = "succeeded"
+    existing.finished_at = completed_at
+    existing.cursor_after = payload.cursor_after
+    existing.imported_count = payload.imported_count
     if state is None:
         state = SyncState(user_id=payload.user_id)
         db.add(state)
     state.cursor = payload.cursor_after
-    state.last_successful_execution_id = execution.id
+    state.last_successful_execution_id = existing.id
     state.last_synced_at = completed_at
     db.commit()
     return GmailSyncCommitResponse(
         user_id=payload.user_id,
         cursor=payload.cursor_after,
         last_synced_at=completed_at,
-        execution_id=execution.id,
+        execution_id=existing.id,
         imported_count=payload.imported_count,
     )
 
@@ -134,6 +202,7 @@ def import_gmail_messages(
     imported_count = 0
     repaired_count = 0
     created_thread_count = 0
+    classification_tasks = []
     thread_ids: dict[str, object] = {}
 
     for message in payload.messages:
@@ -187,6 +256,12 @@ def import_gmail_messages(
         ).scalar_one_or_none()
         if inserted_email_id is not None:
             imported_count += 1
+            classification_tasks.append({
+                "user_id": payload.user_id,
+                "email_id": inserted_email_id,
+                "subject": message.subject,
+                "body": readable_body,
+            })
         else:
             repair_candidates: set[str] = set()
             if message.body_text and readable_body != message.body_text:
@@ -219,4 +294,5 @@ def import_gmail_messages(
         duplicate_count=received_count - imported_count,
         repaired_count=repaired_count,
         created_thread_count=created_thread_count,
+        classification_tasks=classification_tasks,
     )

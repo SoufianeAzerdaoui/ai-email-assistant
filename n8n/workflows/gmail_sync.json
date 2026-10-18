@@ -52,6 +52,12 @@
               "name": "test_mode",
               "value": true,
               "type": "boolean"
+        },
+        {
+          "id": "mailflow-classify-test-mode",
+          "name": "classify_in_test_mode",
+          "value": false,
+          "type": "boolean"
             }
           ]
         },
@@ -66,12 +72,12 @@
         176
       ],
       "notesInFlow": true,
-      "notes": "Renseigner l'UUID Mailflow. test_mode=true limite la liste à 50 messages et interdit tout commit de historyId. Passer à false pour le mode normal."
+      "notes": "Renseigner l'UUID Mailflow. test_mode=true limite la liste à 50 messages et interdit tout commit de historyId. classify_in_test_mode=false empêche une analyse Gemini massive pendant les essais."
     },
     {
       "parameters": {
         "mode": "runOnceForAllItems",
-        "jsCode": "const userId = String($json.user_id || '').trim();\nconst uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;\nif (!uuid.test(userId)) throw new Error('Renseignez un UUID Mailflow valide dans Configurer utilisateur.');\nif (typeof $json.test_mode !== 'boolean') throw new Error('test_mode doit être un booléen.');\nreturn [{ json: { user_id: userId, test_mode: $json.test_mode } }];"
+        "jsCode": "const userId = String($json.user_id || '').trim();\nconst uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;\nif (!uuid.test(userId)) throw new Error('Renseignez un UUID Mailflow valide dans Configurer utilisateur.');\nif (typeof $json.test_mode !== 'boolean') throw new Error('test_mode doit être un booléen.');\nif (typeof $json.classify_in_test_mode !== 'boolean') throw new Error('classify_in_test_mode doit être un booléen.');\nreturn [{ json: { user_id: userId, test_mode: $json.test_mode, classify_in_test_mode: $json.classify_in_test_mode } }];"
       },
       "id": "validate-user",
       "name": "Valider utilisateur",
@@ -104,6 +110,29 @@
       "waitBetweenTries": 5000,
       "notesInFlow": true,
       "notes": "Credential requis : \"Mailflow - Vers FastAPI\", Header Auth X-Webhook-Secret = WEBHOOK_SECRET du backend. Ne jamais utiliser le credential entrant n8n."
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://host.docker.internal:8000/internal/webhooks/gmail/sync-state/claim",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{ { user_id: $json.user_id, idempotency_key: `gmail-sync:${$execution.id}` } }}",
+        "options": {"timeout": 30000}
+      },
+      "id": "claim-sync-state",
+      "name": "Réserver synchronisation FastAPI",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [-672, 160],
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 5000,
+      "notesInFlow": true,
+      "notes": "Credential requis : \"Mailflow - Vers FastAPI\". Le backend refuse une seconde synchronisation normale tant que le verrou de 30 minutes de la précédente est actif. Le mode TEST ne réserve aucun verrou."
     },
     {
       "parameters": {
@@ -180,7 +209,7 @@
     {
       "parameters": {
         "mode": "runOnceForAllItems",
-        "jsCode": "const state = $('Lire curseur FastAPI').first().json;\nconst response = $json;\nif (response.statusCode !== 200) throw new Error(`Gmail messages.list TEST a répondu HTTP ${response.statusCode}.`);\nconst messages = Array.isArray(response.body?.messages) ? response.body.messages : [];\nif (messages.length > 50) throw new Error('Le mode TEST a reçu plus de 50 identifiants Gmail.');\nconst sync = { user_id: state.user_id, cursor_before: state.cursor || null, cursor_after: null, mode: 'test', test_mode: true };\nconst ids = [...new Set(messages.map((message) => typeof message?.id === 'string' ? message.id.trim() : '').filter(Boolean))];\nif (ids.length === 0) return [{ json: { _empty: true, _sync: sync } }];\nreturn ids.map((id) => ({ json: { gmail_message_id: id, attempt: 0, _sync: sync } }));"
+        "jsCode": "const state = $('Lire curseur FastAPI').first().json;\nconst config = $('Configurer utilisateur').first().json;\nconst response = $json;\nif (response.statusCode !== 200) throw new Error(`Gmail messages.list TEST a répondu HTTP ${response.statusCode}.`);\nconst messages = Array.isArray(response.body?.messages) ? response.body.messages : [];\nif (messages.length > 50) throw new Error('Le mode TEST a reçu plus de 50 identifiants Gmail.');\nconst sync = { user_id: state.user_id, cursor_before: state.cursor || null, cursor_after: null, mode: 'test', test_mode: true, classify_in_test_mode: config.classify_in_test_mode === true };\nconst ids = [...new Set(messages.map((message) => typeof message?.id === 'string' ? message.id.trim() : '').filter(Boolean))];\nif (ids.length === 0) return [{ json: { _empty: true, _sync: sync } }];\nreturn ids.map((id) => ({ json: { gmail_message_id: id, attempt: 0, _sync: sync } }));"
       },
       "id": "prepare-test-list",
       "name": "Préparer liste TEST",
@@ -328,7 +357,7 @@
     {
       "parameters": {
         "mode": "runOnceForAllItems",
-        "jsCode": "const state = $('Lire curseur FastAPI').first().json;\nconst ids = new Set();\nlet cursorAfter = null;\nfor (const item of $input.all()) {\n  const response = item.json;\n  if (response.statusCode !== 200) throw new Error(`Gmail history.list a répondu HTTP ${response.statusCode}. Le curseur reste inchangé.`);\n  const body = response.body || {};\n  if (typeof body.historyId === 'string' && body.historyId.trim()) cursorAfter = body.historyId.trim();\n  for (const event of Array.isArray(body.history) ? body.history : []) {\n    for (const added of Array.isArray(event.messagesAdded) ? event.messagesAdded : []) {\n      const id = typeof added?.message?.id === 'string' ? added.message.id.trim() : '';\n      if (id) ids.add(id);\n    }\n  }\n}\nif (!cursorAfter) throw new Error('Gmail history.list n’a pas fourni de historyId final.');\nconst sync = { user_id: state.user_id, cursor_before: state.cursor, cursor_after: cursorAfter, mode: 'incremental', test_mode: false };\nif (ids.size === 0) return [{ json: { _empty: true, _sync: sync } }];\nreturn [...ids].map((id) => ({ json: { gmail_message_id: id, attempt: 0, _sync: sync } }));"
+        "jsCode": "const state = $('Réserver synchronisation FastAPI').first().json;\nconst ids = new Set();\nlet cursorAfter = null;\nfor (const item of $input.all()) {\n  const response = item.json;\n  if (response.statusCode !== 200) throw new Error(`Gmail history.list a répondu HTTP ${response.statusCode}. Le curseur reste inchangé.`);\n  const body = response.body || {};\n  if (typeof body.historyId === 'string' && body.historyId.trim()) cursorAfter = body.historyId.trim();\n  for (const event of Array.isArray(body.history) ? body.history : []) {\n    for (const added of Array.isArray(event.messagesAdded) ? event.messagesAdded : []) {\n      const id = typeof added?.message?.id === 'string' ? added.message.id.trim() : '';\n      if (id) ids.add(id);\n    }\n  }\n}\nif (!cursorAfter) throw new Error('Gmail history.list n’a pas fourni de historyId final.');\nconst sync = { user_id: state.user_id, execution_id: state.execution_id, idempotency_key: `gmail-sync:${$execution.id}`, cursor_before: state.cursor, cursor_after: cursorAfter, mode: 'incremental', test_mode: false };\nif (ids.size === 0) return [{ json: { _empty: true, _sync: sync } }];\nreturn [...ids].map((id) => ({ json: { gmail_message_id: id, attempt: 0, _sync: sync } }));"
       },
       "id": "prepare-history",
       "name": "Préparer historique Gmail",
@@ -420,7 +449,7 @@
     {
       "parameters": {
         "mode": "runOnceForAllItems",
-        "jsCode": "const state = $('Lire curseur FastAPI').first().json;\nconst profile = $('Lire profil Gmail').first().json;\nconst cursorAfter = typeof profile.historyId === 'string' ? profile.historyId.trim() : '';\nif (!cursorAfter) throw new Error('Le profil Gmail n’a pas fourni de historyId.');\nconst ids = new Set();\nfor (const item of $input.all()) {\n  if (item.json.statusCode !== 200) throw new Error(`Gmail messages.list a répondu HTTP ${item.json.statusCode}.`);\n  for (const message of Array.isArray(item.json.body?.messages) ? item.json.body.messages : []) {\n    const id = typeof message?.id === 'string' ? message.id.trim() : '';\n    if (id) ids.add(id);\n  }\n}\nconst sync = { user_id: state.user_id, cursor_before: state.cursor || null, cursor_after: cursorAfter, mode: state.cursor ? 'recovery' : 'initial', test_mode: false };\nif (ids.size === 0) return [{ json: { _empty: true, _sync: sync } }];\nreturn [...ids].map((id) => ({ json: { gmail_message_id: id, attempt: 0, _sync: sync } }));"
+        "jsCode": "const state = $('Réserver synchronisation FastAPI').first().json;\nconst profile = $('Lire profil Gmail').first().json;\nconst cursorAfter = typeof profile.historyId === 'string' ? profile.historyId.trim() : '';\nif (!cursorAfter) throw new Error('Le profil Gmail n’a pas fourni de historyId.');\nconst ids = new Set();\nfor (const item of $input.all()) {\n  if (item.json.statusCode !== 200) throw new Error(`Gmail messages.list a répondu HTTP ${item.json.statusCode}.`);\n  for (const message of Array.isArray(item.json.body?.messages) ? item.json.body.messages : []) {\n    const id = typeof message?.id === 'string' ? message.id.trim() : '';\n    if (id) ids.add(id);\n  }\n}\nconst sync = { user_id: state.user_id, execution_id: state.execution_id, idempotency_key: `gmail-sync:${$execution.id}`, cursor_before: state.cursor || null, cursor_after: cursorAfter, mode: state.cursor ? 'recovery' : 'initial', test_mode: false };\nif (ids.size === 0) return [{ json: { _empty: true, _sync: sync } }];\nreturn [...ids].map((id) => ({ json: { gmail_message_id: id, attempt: 0, _sync: sync } }));"
       },
       "id": "prepare-full-list",
       "name": "Préparer liste complète",
@@ -684,9 +713,9 @@
         "authentication": "genericCredentialType",
         "genericAuthType": "httpHeaderAuth",
         "sendBody": true,
-        "contentType": "raw",
-        "rawContentType": "application/json",
-        "body": "={{ JSON.stringify({ user_id: $json._sync.user_id, messages: [{ gmail_message_id: $json.gmail_message_id, gmail_thread_id: $json.gmail_thread_id, message_id: $json.message_id, sender: $json.sender, recipients: $json.recipients, subject: $json.subject, body_text: $json.body_text, body_html: $json.body_html, received_at: $json.received_at }] }) }}",
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{ { user_id: $json._sync.user_id, messages: [{ gmail_message_id: $json.gmail_message_id, gmail_thread_id: $json.gmail_thread_id, message_id: $json.message_id, sender: $json.sender, recipients: $json.recipients, subject: $json.subject, body_text: $json.body_text, body_html: $json.body_html, received_at: $json.received_at }] } }}",
         "options": {
           "timeout": 60000
         }
@@ -708,7 +737,7 @@
     {
       "parameters": {
         "mode": "runOnceForAllItems",
-        "jsCode": "const message = $('Normaliser message Gmail').item.json;\nreturn [{ json: { _sync: message._sync, gmail_message_id: message.gmail_message_id, imported_count: Number.isInteger($json.imported_count) ? $json.imported_count : 0 } }];"
+        "jsCode": "const message = $('Normaliser message Gmail').item.json;\nconst importedCount = Number.isInteger($json.imported_count) ? $json.imported_count : 0;\nconst tasks = Array.isArray($json.classification_tasks) ? $json.classification_tasks : [];\nconst classificationTask = importedCount === 1 && tasks.length === 1 ? tasks[0] : null;\nreturn [{ json: { _sync: message._sync, gmail_message_id: message.gmail_message_id, imported_count: importedCount, classification_task: classificationTask } }];"
       },
       "id": "preserve-import-result",
       "name": "Conserver résultat import",
@@ -721,6 +750,118 @@
     },
     {
       "parameters": {
+        "conditions": {
+          "options": {"caseSensitive": true, "leftValue": "", "typeValidation": "strict", "version": 2},
+          "conditions": [{
+            "id": "classification-needed",
+            "leftValue": "={{ $json.classification_task !== null && ($json._sync.test_mode !== true || $json._sync.classify_in_test_mode === true) }}",
+            "rightValue": true,
+            "operator": {"type": "boolean", "operation": "true", "singleValue": true}
+          }],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "classification-needed",
+      "name": "Classification nécessaire ?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [2368, 96],
+      "notesInFlow": true,
+      "notes": "Vrai uniquement lorsque PostgreSQL confirme qu'un nouvel e-mail Gmail a été créé. Les doublons et réparations ne sont jamais reclassifiés."
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://127.0.0.1:5678/webhook/classification",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{ $json.classification_task }}",
+        "options": {"timeout": 30000}
+      },
+      "id": "dispatch-classification",
+      "name": "Déclencher classification IA",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [2592, 32],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000,
+      "continueOnFail": true,
+      "notesInFlow": true,
+      "notes": "Credential requis : \"Mailflow - Entrée n8n\", Header Auth X-Webhook-Secret = N8N_WEBHOOK_SECRET. L'URL utilise le webhook de production ; l'échec n'annule jamais l'import ni le commit du curseur."
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const preserved = $('Conserver résultat import').item.json;\nconst statusCode = Number($json.statusCode ?? $json.error?.httpCode ?? 0) || null;\nconst accepted = $json.error === undefined && (statusCode === null || (statusCode >= 200 && statusCode < 300));\nreturn [{ json: { ...preserved, classification_dispatch_failed: !accepted, classification_status_code: statusCode } }];"
+      },
+      "id": "preserve-classification-dispatch",
+      "name": "Conserver résultat classification",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2816, 32]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {"caseSensitive": true, "leftValue": "", "typeValidation": "strict", "version": 2},
+          "conditions": [{
+            "id": "classification-accepted",
+            "leftValue": "={{ $json.classification_dispatch_failed === false }}",
+            "rightValue": true,
+            "operator": {"type": "boolean", "operation": "true", "singleValue": true}
+          }],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "classification-accepted",
+      "name": "Classification acceptée ?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [3040, 32]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://host.docker.internal:8000/internal/webhooks/workflow-errors",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{ { user_id: $json.classification_task.user_id, email_id: $json.classification_task.email_id, idempotency_key: `classification-dispatch:${$execution.id}:${$json.classification_task.email_id}`, workflow_name: 'Mailflow - Gmail Sync', node_name: 'Déclencher classification IA', error_type: 'classification_dispatch_failed', status_code: $json.classification_status_code, attempt: 3 } }}",
+        "options": {"timeout": 30000}
+      },
+      "id": "log-classification-dispatch-error",
+      "name": "Journaliser échec classification",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [3264, 144],
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 5000,
+      "continueOnFail": true,
+      "notesInFlow": true,
+      "notes": "Credential requis : \"Mailflow - Vers FastAPI\". Aucun contenu d'e-mail, message d'erreur brut ou secret n'est journalisé."
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "return [{ json: $('Conserver résultat classification').item.json }];"
+      },
+      "id": "restore-import-result",
+      "name": "Restaurer résultat import",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [3488, 144]
+    },
+    {
+      "parameters": {
         "resume": "timeInterval",
         "amount": 2.5,
         "unit": "seconds"
@@ -730,7 +871,7 @@
       "type": "n8n-nodes-base.wait",
       "typeVersion": 1.1,
       "position": [
-        2368,
+        3488,
         96
       ],
       "notesInFlow": true,
@@ -775,7 +916,7 @@
     {
       "parameters": {
         "mode": "runOnceForAllItems",
-        "jsCode": "const items = $input.all();\nconst sync = items[0]?.json?._sync;\nif (!sync?.user_id || !sync?.cursor_after || sync.test_mode) throw new Error('Contexte de commit incomplet ou interdit.');\nlet importedCount = 0;\nlet skippedNotFound = 0;\nfor (const item of items) {\n  if (Number.isInteger(item.json?.imported_count)) importedCount += item.json.imported_count;\n  if (Number.isInteger(item.json?.skipped_not_found)) skippedNotFound += item.json.skipped_not_found;\n}\nreturn [{ json: { user_id: sync.user_id, cursor_before: sync.cursor_before || null, cursor_after: sync.cursor_after, idempotency_key: `gmail-sync:${$execution.id}:${sync.cursor_after}`, imported_count: importedCount, skipped_not_found: skippedNotFound } }];"
+        "jsCode": "const items = $input.all();\nconst sync = items[0]?.json?._sync;\nif (!sync?.user_id || !sync?.execution_id || !sync?.idempotency_key || !sync?.cursor_after || sync.test_mode) throw new Error('Contexte de commit incomplet ou interdit.');\nlet importedCount = 0;\nlet skippedNotFound = 0;\nfor (const item of items) {\n  if (Number.isInteger(item.json?.imported_count)) importedCount += item.json.imported_count;\n  if (Number.isInteger(item.json?.skipped_not_found)) skippedNotFound += item.json.skipped_not_found;\n}\nreturn [{ json: { user_id: sync.user_id, execution_id: sync.execution_id, cursor_before: sync.cursor_before || null, cursor_after: sync.cursor_after, idempotency_key: sync.idempotency_key, imported_count: importedCount, skipped_not_found: skippedNotFound } }];"
       },
       "id": "prepare-commit",
       "name": "Préparer commit curseur",
@@ -795,9 +936,9 @@
         "authentication": "genericCredentialType",
         "genericAuthType": "httpHeaderAuth",
         "sendBody": true,
-        "contentType": "raw",
-        "rawContentType": "application/json",
-        "body": "={{ JSON.stringify({ user_id: $json.user_id, cursor_before: $json.cursor_before, cursor_after: $json.cursor_after, idempotency_key: $json.idempotency_key, imported_count: $json.imported_count }) }}",
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{ { user_id: $json.user_id, execution_id: $json.execution_id, cursor_before: $json.cursor_before, cursor_after: $json.cursor_after, idempotency_key: $json.idempotency_key, imported_count: $json.imported_count } }}",
         "options": {
           "timeout": 30000
         }
@@ -935,12 +1076,15 @@
         ],
         [
           {
-            "node": "Curseur présent ?",
+            "node": "Réserver synchronisation FastAPI",
             "type": "main",
             "index": 0
           }
         ]
       ]
+    },
+    "Réserver synchronisation FastAPI": {
+      "main": [[{"node": "Curseur présent ?", "type": "main", "index": 0}]]
     },
     "Lister 50 IDs Gmail (TEST)": {
       "main": [
@@ -1208,12 +1352,36 @@
       "main": [
         [
           {
-            "node": "Attendre 2,5 secondes",
+            "node": "Classification nécessaire ?",
             "type": "main",
             "index": 0
           }
         ]
       ]
+    },
+    "Classification nécessaire ?": {
+      "main": [
+        [{"node": "Déclencher classification IA", "type": "main", "index": 0}],
+        [{"node": "Attendre 2,5 secondes", "type": "main", "index": 0}]
+      ]
+    },
+    "Déclencher classification IA": {
+      "main": [[{"node": "Conserver résultat classification", "type": "main", "index": 0}]]
+    },
+    "Conserver résultat classification": {
+      "main": [[{"node": "Classification acceptée ?", "type": "main", "index": 0}]]
+    },
+    "Classification acceptée ?": {
+      "main": [
+        [{"node": "Attendre 2,5 secondes", "type": "main", "index": 0}],
+        [{"node": "Journaliser échec classification", "type": "main", "index": 0}]
+      ]
+    },
+    "Journaliser échec classification": {
+      "main": [[{"node": "Restaurer résultat import", "type": "main", "index": 0}]]
+    },
+    "Restaurer résultat import": {
+      "main": [[{"node": "Attendre 2,5 secondes", "type": "main", "index": 0}]]
     },
     "Attendre 2,5 secondes": {
       "main": [
