@@ -71,6 +71,19 @@ function priorityLabel(priority: number | null) {
   return "Basse";
 }
 
+function senderParts(sender: string) {
+  const match = sender.match(/^\s*(.*?)\s*<([^<>]+)>\s*$/);
+  if (!match) return { name: sender, address: "" };
+  return { name: match[1] || match[2], address: match[2] };
+}
+
+function statusClass(status: string) {
+  if (status === "pending") return "border-amber-200 bg-amber-50 text-amber-700";
+  if (status === "draft_ready") return "border-blue-200 bg-blue-50 text-blue-700";
+  if (status === "replied") return "border-emerald-200 bg-emerald-50 text-emerald-700";
+  return "";
+}
+
 export function Inbox() {
   const router = useRouter();
   const [data, setData] = useState<EmailPage | null>(null);
@@ -167,8 +180,24 @@ export function Inbox() {
         </Button>
       </div>
 
-      <section className="mb-4 rounded-lg border border-slate-200 bg-white p-3 sm:p-4" aria-label="Filtres">
-        <div className="relative mb-3">
+      <section className="mb-4 rounded-lg border border-slate-200 bg-white p-4" aria-label="Recherche et filtres">
+        <div className="mb-4 flex items-center justify-between gap-3">
+          <div>
+            <h2 className="text-sm font-semibold text-slate-900">Recherche et filtres</h2>
+            <p className="mt-0.5 text-xs text-slate-500">Affinez la liste sans perdre le contexte.</p>
+          </div>
+          {hasFilters ? (
+            <button
+              type="button"
+              onClick={resetFilters}
+              className="inline-flex shrink-0 items-center gap-1.5 rounded-md px-2 py-1.5 text-xs font-medium text-slate-500 outline-none hover:bg-slate-100 hover:text-blue-700 focus-visible:ring-2 focus-visible:ring-blue-500/30"
+            >
+              <FilterX className="size-3.5" />
+              Effacer
+            </button>
+          ) : null}
+        </div>
+        <div className="relative mb-4">
           <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-slate-400" />
           <Input
             className="pl-9"
@@ -179,62 +208,54 @@ export function Inbox() {
             aria-label="Rechercher les e-mails"
           />
         </div>
-        <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-6">
-          <Select value={filters.category} onValueChange={(value) => updateFilter("category", value)}>
-            <SelectTrigger aria-label="Filtrer par catégorie"><SelectValue placeholder="Catégorie" /></SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">Toutes les catégories</SelectItem>
-              {Object.entries(categories).map(([value, label]) => <SelectItem key={value} value={value}>{label}</SelectItem>)}
-            </SelectContent>
-          </Select>
-          <Select value={filters.priority} onValueChange={(value) => updateFilter("priority", value)}>
-            <SelectTrigger aria-label="Filtrer par priorité"><SelectValue placeholder="Priorité" /></SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">Toutes les priorités</SelectItem>
-              <SelectItem value="3">Haute</SelectItem>
-              <SelectItem value="2">Moyenne</SelectItem>
-              <SelectItem value="1">Basse</SelectItem>
-            </SelectContent>
-          </Select>
-          <Select value={filters.status} onValueChange={(value) => updateFilter("status", value)}>
-            <SelectTrigger aria-label="Filtrer par statut"><SelectValue placeholder="Statut" /></SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">Tous les statuts</SelectItem>
-              {Object.entries(statuses).map(([value, label]) => <SelectItem key={value} value={value}>{label}</SelectItem>)}
-            </SelectContent>
-          </Select>
-          <Input
-            value={filters.sender}
-            onChange={(event) => updateFilter("sender", event.target.value)}
-            placeholder="Expéditeur"
-            aria-label="Filtrer par expéditeur"
-          />
-          <Input
-            type="date"
-            value={filters.dateFrom}
-            onChange={(event) => updateFilter("dateFrom", event.target.value)}
-            aria-label="Date de début"
-          />
-          <Input
-            type="date"
-            value={filters.dateTo}
-            onChange={(event) => updateFilter("dateTo", event.target.value)}
-            aria-label="Date de fin"
-          />
+        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
+          <FilterField label="Catégorie">
+            <Select value={filters.category} onValueChange={(value) => updateFilter("category", value)}>
+              <SelectTrigger aria-label="Filtrer par catégorie"><SelectValue placeholder="Catégorie" /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">Toutes</SelectItem>
+                {Object.entries(categories).map(([value, label]) => <SelectItem key={value} value={value}>{label}</SelectItem>)}
+              </SelectContent>
+            </Select>
+          </FilterField>
+          <FilterField label="Priorité">
+            <Select value={filters.priority} onValueChange={(value) => updateFilter("priority", value)}>
+              <SelectTrigger aria-label="Filtrer par priorité"><SelectValue placeholder="Priorité" /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">Toutes</SelectItem>
+                <SelectItem value="3">Haute</SelectItem>
+                <SelectItem value="2">Moyenne</SelectItem>
+                <SelectItem value="1">Basse</SelectItem>
+              </SelectContent>
+            </Select>
+          </FilterField>
+          <FilterField label="Statut">
+            <Select value={filters.status} onValueChange={(value) => updateFilter("status", value)}>
+              <SelectTrigger aria-label="Filtrer par statut"><SelectValue placeholder="Statut" /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">Tous</SelectItem>
+                {Object.entries(statuses).map(([value, label]) => <SelectItem key={value} value={value}>{label}</SelectItem>)}
+              </SelectContent>
+            </Select>
+          </FilterField>
+          <FilterField label="Expéditeur">
+            <Input value={filters.sender} onChange={(event) => updateFilter("sender", event.target.value)} placeholder="Nom ou adresse" aria-label="Filtrer par expéditeur" />
+          </FilterField>
+          <FilterField label="Du">
+            <Input type="date" value={filters.dateFrom} onChange={(event) => updateFilter("dateFrom", event.target.value)} aria-label="Date de début" />
+          </FilterField>
+          <FilterField label="Au">
+            <Input type="date" value={filters.dateTo} onChange={(event) => updateFilter("dateTo", event.target.value)} aria-label="Date de fin" />
+          </FilterField>
         </div>
-        {hasFilters ? (
-          <button
-            type="button"
-            onClick={resetFilters}
-            className="mt-3 inline-flex items-center gap-1.5 text-xs font-medium text-slate-500 outline-none hover:text-blue-700 focus-visible:text-blue-700"
-          >
-            <FilterX className="size-3.5" />
-            Effacer les filtres
-          </button>
-        ) : null}
       </section>
 
       <section className="overflow-hidden rounded-lg border border-slate-200 bg-white" aria-live="polite">
+        {!loading && !error && data && data.items.length > 0 ? (
+          <div className="hidden grid-cols-[minmax(180px,0.9fr)_minmax(320px,2fr)_minmax(230px,auto)] gap-5 border-b border-slate-200 bg-slate-50/70 px-5 py-2.5 text-[11px] font-semibold uppercase tracking-wider text-slate-500 sm:grid">
+            <span>Expéditeur</span><span>Message</span><span className="text-right">État et date</span>
+          </div>
+        ) : null}
         {loading ? <LoadingRows /> : null}
         {!loading && error ? (
           <div className="flex min-h-72 flex-col items-center justify-center px-6 text-center">
@@ -260,33 +281,38 @@ export function Inbox() {
             {hasFilters ? <Button className="mt-4" variant="outline" onClick={resetFilters}>Réinitialiser</Button> : null}
           </div>
         ) : null}
-        {!loading && !error && data?.items.map((email) => (
+        {!loading && !error && data?.items.map((email) => {
+          const sender = senderParts(email.sender);
+          return (
           <Link
             key={email.id}
             href={`/inbox/threads/${email.thread_id}`}
-            className="block border-b border-slate-100 outline-none last:border-b-0 hover:bg-slate-50/80 focus-visible:bg-blue-50/60 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-blue-500/30"
+            className="group relative block border-b border-slate-100 outline-none last:border-b-0 hover:bg-slate-50/80 focus-visible:bg-blue-50/60 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-blue-500/30"
             aria-label={`Ouvrir la conversation : ${email.subject || "Sans objet"}`}
           >
-            <article className="grid gap-2 px-4 py-4 sm:grid-cols-[minmax(150px,0.8fr)_minmax(260px,2fr)_auto] sm:items-center sm:gap-5 sm:px-5">
+            <span className="absolute inset-y-3 left-0 w-0.5 rounded-r bg-blue-600 opacity-0 transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100" />
+            <article className="grid gap-3 px-4 py-4 sm:grid-cols-[minmax(180px,0.9fr)_minmax(320px,2fr)_minmax(230px,auto)] sm:items-center sm:gap-5 sm:px-5">
             <div className="min-w-0">
-              <p className="truncate text-sm font-medium text-slate-800">{email.sender}</p>
+              <p className="truncate text-sm font-semibold text-slate-900">{sender.name}</p>
+              {sender.address ? <p className="mt-0.5 hidden truncate text-xs text-slate-500 xl:block">{sender.address}</p> : null}
               <p className="mt-1 text-xs text-slate-400 sm:hidden">{formatDate(email.received_at)}</p>
             </div>
             <div className="min-w-0">
               <div className="flex min-w-0 items-center gap-2">
                 <p className="truncate text-sm font-medium text-slate-900">{email.subject || "Sans objet"}</p>
-                {email.category ? <Badge className="hidden shrink-0 lg:inline-flex">{categories[email.category] ?? email.category}</Badge> : null}
               </div>
               <p className="mt-1 truncate text-sm text-slate-500">{email.summary || email.body_text}</p>
-              <div className="mt-2 flex flex-wrap gap-1.5 lg:hidden">
+              <div className="mt-2 flex flex-wrap gap-1.5 sm:hidden">
                 {email.category ? <Badge>{categories[email.category] ?? email.category}</Badge> : null}
-                <Badge>{statuses[email.status] ?? email.status}</Badge>
+                <Badge className={statusClass(email.status)}>{statuses[email.status] ?? email.status}</Badge>
+                <Badge className={email.priority === 3 ? "border-blue-200 bg-blue-50 text-blue-700" : ""}>{priorityLabel(email.priority)}</Badge>
               </div>
             </div>
-            <div className="hidden min-w-32 text-right sm:block">
+            <div className="hidden min-w-0 text-right sm:block">
               <p className="text-xs font-medium text-slate-500">{formatDate(email.received_at)}</p>
-              <div className="mt-2 flex justify-end gap-1.5">
-                <Badge className="hidden xl:inline-flex">{statuses[email.status] ?? email.status}</Badge>
+              <div className="mt-2 flex flex-wrap justify-end gap-1.5">
+                {email.category ? <Badge>{categories[email.category] ?? email.category}</Badge> : null}
+                <Badge className={statusClass(email.status)}>{statuses[email.status] ?? email.status}</Badge>
                 <Badge className={email.priority === 3 ? "border-blue-200 bg-blue-50 text-blue-700" : ""}>
                   {priorityLabel(email.priority)}
                 </Badge>
@@ -294,11 +320,12 @@ export function Inbox() {
             </div>
             </article>
           </Link>
-        ))}
+          );
+        })}
       </section>
 
       {!loading && !error && data && data.total > 0 ? (
-        <div className="mt-4 flex flex-col gap-3 text-sm text-slate-500 sm:flex-row sm:items-center sm:justify-between">
+        <div className="mt-4 flex flex-col gap-3 rounded-lg border border-slate-200 bg-white px-4 py-3 text-sm text-slate-500 sm:flex-row sm:items-center sm:justify-between">
           <p>
             {Math.min((page - 1) * LIMIT + 1, data.total)}–{Math.min(page * LIMIT, data.total)} sur {data.total}
           </p>
@@ -315,6 +342,15 @@ export function Inbox() {
           </div>
         </div>
       ) : null}
+    </div>
+  );
+}
+
+function FilterField({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <div className="min-w-0 space-y-1.5">
+      <span className="block text-xs font-medium text-slate-600">{label}</span>
+      {children}
     </div>
   );
 }

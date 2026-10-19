@@ -283,15 +283,15 @@ export function ReplyComposer({ emailId }: { emailId: string }) {
   const status = reply ? statusDetails[reply.status] : null;
 
   return (
-    <section className="mt-5 rounded-lg border border-slate-200 bg-white p-4 sm:p-5" aria-labelledby="reply-title">
+    <section className="mt-8 rounded-lg border border-slate-300 bg-white p-4 sm:p-6" aria-labelledby="reply-title">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <h2 id="reply-title" className="text-sm font-semibold text-slate-900">Rédiger une réponse</h2>
-          <p className="mt-1 text-xs text-slate-500">L’envoi nécessite votre confirmation.</p>
+          <h2 id="reply-title" className="text-base font-semibold text-slate-900">Rédiger une réponse</h2>
+          <p className="mt-1 text-sm text-slate-500">Préparez votre message puis confirmez explicitement l’envoi.</p>
         </div>
         {status ? (
           <span className={`inline-flex w-fit items-center gap-1.5 rounded-md border px-2 py-1 text-xs font-medium ${status.className}`}>
-            {reply?.status === "failed" ? <AlertCircle className="size-3.5" /> : <Clock3 className="size-3.5" />}
+            {reply?.status === "sent" ? <Check className="size-3.5" /> : reply?.status === "failed" ? <AlertCircle className="size-3.5" /> : <Clock3 className="size-3.5" />}
             {status.label}
           </span>
         ) : null}
@@ -310,13 +310,13 @@ export function ReplyComposer({ emailId }: { emailId: string }) {
             onChange={(event) => { setBodyText(event.target.value); setSaved(false); }}
             disabled={requestLocked || busy}
             placeholder="Écrivez votre réponse…"
-            rows={7}
-            className="mt-4 w-full resize-y rounded-md border border-slate-200 bg-white px-3 py-2.5 text-sm leading-6 text-slate-800 outline-none transition-colors placeholder:text-slate-400 focus:border-blue-500 focus:ring-2 focus:ring-blue-500/10 disabled:bg-slate-50 disabled:text-slate-500"
+            rows={8}
+            className="mt-5 min-h-48 w-full resize-y rounded-md border border-slate-200 bg-white px-3.5 py-3 text-[15px] leading-7 text-slate-800 outline-none transition-colors placeholder:text-slate-400 focus:border-blue-500 focus:ring-2 focus:ring-blue-500/10 disabled:bg-slate-50 disabled:text-slate-500"
           />
 
           <div className="mt-3 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <div className="flex items-center gap-2">
-              <label className="text-sm text-slate-600" htmlFor="reply-tone">Ton</label>
+              <label className="text-sm font-medium text-slate-700" htmlFor="reply-tone">Ton</label>
               <Select value={tone} onValueChange={(value) => { setTone(value as DraftTone); setSaved(false); }} disabled={requestLocked || busy}>
                 <SelectTrigger id="reply-tone" className="w-32"><SelectValue /></SelectTrigger>
                 <SelectContent>
@@ -328,15 +328,15 @@ export function ReplyComposer({ emailId }: { emailId: string }) {
               {saved ? <span className="flex items-center gap-1 text-xs text-emerald-700"><Check className="size-3.5" /> Enregistré</span> : null}
             </div>
             {!requestLocked ? (
-              <div className="flex flex-wrap gap-2">
-                <Button type="button" variant="outline" onClick={generateWithAi} disabled={busy}>
+              <div className="grid w-full gap-2 sm:w-auto sm:grid-flow-col sm:auto-cols-max">
+                <Button className="w-full sm:w-auto" type="button" variant="outline" onClick={generateWithAi} disabled={busy}>
                   {generating ? <LoaderCircle className="size-4 animate-spin" /> : <Sparkles className="size-4" />}
                   {generating ? "Génération…" : "Générer avec IA"}
                 </Button>
-                <Button type="button" variant="outline" onClick={saveDraft} disabled={busy || !bodyText.trim()}>
+                <Button className="w-full sm:w-auto" type="button" variant="outline" onClick={saveDraft} disabled={busy || !bodyText.trim()}>
                   <Save className="size-4" /> Enregistrer
                 </Button>
-                <Button type="button" onClick={() => setConfirming(true)} disabled={busy || !bodyText.trim()}>
+                <Button className="w-full sm:w-auto" type="button" onClick={() => setConfirming(true)} disabled={busy || !bodyText.trim()}>
                   <Send className="size-4" /> Demander l’envoi
                 </Button>
               </div>
