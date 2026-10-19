@@ -1,0 +1,22 @@
+name: mailflow-test
+
+services:
+  postgres-test:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: mailflow_test
+      POSTGRES_USER: mailflow_test
+      POSTGRES_PASSWORD: mailflow_test_only
+    ports:
+      - "127.0.0.1:55432:5432"
+    volumes:
+      - postgres_test_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U mailflow_test -d mailflow_test"]
+      interval: 2s
+      timeout: 3s
+      retries: 15
+    restart: "no"
+
+volumes:
+  postgres_test_data:
