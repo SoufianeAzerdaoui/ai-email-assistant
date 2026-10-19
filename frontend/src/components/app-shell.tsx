@@ -10,22 +10,22 @@ export function AppShell({ children, user }: { children: React.ReactNode; user: 
 
   return (
     <UserProvider user={user}>
-      <div className="min-h-screen bg-slate-50 md:grid md:grid-cols-[240px_1fr]">
-      <aside className="fixed inset-y-0 left-0 z-20 hidden w-60 border-r border-slate-200 bg-white md:flex md:flex-col">
+      <div className="min-h-screen bg-slate-50 md:grid md:grid-cols-[248px_minmax(0,1fr)]">
+      <aside className="fixed inset-y-0 left-0 z-20 hidden w-[248px] border-r border-slate-200 bg-white md:flex md:flex-col">
         <div className="flex h-16 items-center gap-2.5 border-b border-slate-100 px-5">
           <span className="flex size-8 items-center justify-center rounded-lg bg-blue-600 text-white">
             <Mail className="size-4.5" strokeWidth={1.8} />
           </span>
           <span className="font-semibold tracking-tight text-slate-900">Mailflow</span>
         </div>
-        <div className="flex-1 px-3 py-5">
-          <p className="mb-2 px-2 text-[11px] font-semibold uppercase tracking-wider text-slate-400">
+        <div className="flex-1 px-3 py-6">
+          <p className="mb-3 px-3 text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-400">
             Navigation
           </p>
           <ShellNavigation />
         </div>
-        <div className="border-t border-slate-100 p-3">
-          <div className="mb-2 flex items-center gap-3 rounded-md px-2 py-2">
+        <div className="border-t border-slate-100 p-4">
+          <div className="mb-3 flex items-center gap-3 rounded-md px-1 py-1">
             <span className="flex size-8 shrink-0 items-center justify-center rounded-full bg-slate-100 text-xs font-semibold text-slate-600">
               {initial}
             </span>
@@ -38,8 +38,8 @@ export function AppShell({ children, user }: { children: React.ReactNode; user: 
         </div>
       </aside>
 
-      <div className="md:col-start-2">
-        <header className="sticky top-0 z-10 flex h-16 items-center justify-between border-b border-slate-200 bg-white/95 px-4 sm:px-6 lg:px-8">
+      <div className="min-w-0 md:col-start-2">
+        <header className="sticky top-0 z-10 flex h-16 min-w-0 items-center justify-between border-b border-slate-200 bg-white px-4 sm:px-6 lg:px-8">
           <div className="flex items-center gap-2.5 md:hidden">
             <span className="flex size-8 items-center justify-center rounded-lg bg-blue-600 text-white">
               <Mail className="size-4" />
@@ -52,7 +52,7 @@ export function AppShell({ children, user }: { children: React.ReactNode; user: 
             <LogoutButton compact />
           </div>
         </header>
-        <main>{children}</main>
+        <main className="min-w-0">{children}</main>
       </div>
       </div>
     </UserProvider>

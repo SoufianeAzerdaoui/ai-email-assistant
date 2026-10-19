@@ -23,6 +23,12 @@ function isSentByUser(sender: string, email: string) {
   return normalizedSender === normalizedEmail || normalizedSender.includes(`<${normalizedEmail}>`);
 }
 
+function senderParts(sender: string) {
+  const match = sender.match(/^\s*(.*?)\s*<([^<>]+)>\s*$/);
+  if (!match) return { name: sender, address: sender };
+  return { name: match[1] || match[2], address: match[2] };
+}
+
 export function Conversation({ threadId }: { threadId: string }) {
   const router = useRouter();
   const user = useCurrentUser();
@@ -64,8 +70,8 @@ export function Conversation({ threadId }: { threadId: string }) {
   }, [loadThread, reloadKey]);
 
   return (
-    <div className="mx-auto w-full max-w-5xl px-4 py-6 sm:px-6 lg:px-8">
-      <div className="mb-5">
+    <div className="mx-auto w-full max-w-[1040px] px-4 py-6 sm:px-6 lg:px-8 lg:py-8">
+      <div className="mb-6 border-b border-slate-200 pb-5">
         <Link
           href="/inbox"
           className="-ml-3 mb-3 inline-flex h-9 items-center gap-2 rounded-md px-3 text-sm font-medium text-slate-600 outline-none transition-colors hover:bg-slate-100 hover:text-slate-900 focus-visible:ring-2 focus-visible:ring-blue-500/30"
@@ -115,30 +121,31 @@ export function Conversation({ threadId }: { threadId: string }) {
       ) : null}
       {!loading && !error && thread && thread.emails.length > 0 ? (
         <>
-          <div className="space-y-3">
+          <div className="space-y-5">
             {thread.emails.map((message) => {
             const sent = isSentByUser(message.sender, user.email);
+            const sender = senderParts(message.sender);
             return (
               <article
                 key={message.id}
-                className={`w-full rounded-lg border p-4 sm:p-5 ${
+                className={`w-full rounded-lg border p-4 sm:p-6 ${
                   sent
-                    ? "ml-auto border-blue-200 bg-blue-50/60 lg:max-w-[88%]"
-                    : "mr-auto border-slate-200 bg-white lg:max-w-[88%]"
+                    ? "ml-auto border-blue-200 bg-blue-50/50 lg:max-w-[92%]"
+                    : "mr-auto border-slate-200 bg-white lg:max-w-[92%]"
                 }`}
               >
                 <div className="flex items-start gap-3">
                   <span className={`flex size-9 shrink-0 items-center justify-center rounded-full text-xs font-semibold ${
                     sent ? "bg-blue-100 text-blue-700" : "bg-slate-100 text-slate-600"
                   }`}>
-                    {message.sender.trim().slice(0, 1).toUpperCase() || "?"}
+                    {sender.name.trim().slice(0, 1).toUpperCase() || "?"}
                   </span>
                   <div className="min-w-0 flex-1">
                     <div className="flex flex-col gap-1 sm:flex-row sm:items-start sm:justify-between sm:gap-4">
                       <div className="min-w-0">
                         <div className="flex min-w-0 items-center gap-2">
                           <p className="truncate text-sm font-medium text-slate-900">
-                            {sent ? "Vous" : message.sender}
+                            {sent ? "Vous" : sender.name}
                           </p>
                           {sent ? (
                             <span className="rounded-md border border-blue-200 bg-white/70 px-1.5 py-0.5 text-[11px] font-medium text-blue-700">
@@ -146,15 +153,16 @@ export function Conversation({ threadId }: { threadId: string }) {
                             </span>
                           ) : null}
                         </div>
-                        <p className="mt-0.5 truncate text-xs text-slate-500">
-                          À : {message.recipients.join(", ") || "Destinataire inconnu"}
-                        </p>
+                        <div className="mt-1 space-y-0.5 text-xs leading-5 text-slate-500">
+                          <p className="truncate"><span className="font-medium text-slate-600">De :</span> {sender.address}</p>
+                          <p className="truncate"><span className="font-medium text-slate-600">À :</span> {message.recipients.join(", ") || "Destinataire inconnu"}</p>
+                        </div>
                       </div>
                       <time dateTime={message.received_at} className="shrink-0 text-xs text-slate-400">
                         {formatDate(message.received_at)}
                       </time>
                     </div>
-                    <div className="mt-4 whitespace-pre-wrap break-words text-sm leading-6 text-slate-700">
+                    <div className="mt-5 max-w-[78ch] whitespace-pre-wrap break-words text-[15px] leading-7 text-slate-700">
                       {message.body_text || <span className="italic text-slate-400">Message sans contenu.</span>}
                     </div>
                   </div>

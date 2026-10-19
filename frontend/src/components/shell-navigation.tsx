@@ -16,7 +16,7 @@ export function ShellNavigation({ compact = false }: { compact?: boolean }) {
 
   return (
     <nav
-      className={compact ? "flex items-center gap-1 md:hidden" : "space-y-1"}
+      className={compact ? "flex items-center gap-1 md:hidden" : "space-y-1.5"}
       aria-label="Navigation principale"
     >
       {items.map((item) => {
@@ -30,13 +30,13 @@ export function ShellNavigation({ compact = false }: { compact?: boolean }) {
             aria-label={compact ? item.label : undefined}
             className={cn(
               "flex items-center rounded-md text-sm font-medium outline-none transition-colors focus-visible:ring-2 focus-visible:ring-blue-500/30",
-              compact ? "size-9 justify-center" : "h-9 gap-3 px-3",
+              compact ? "size-9 justify-center" : "h-10 gap-3 px-3",
               active
-                ? "bg-blue-50 text-blue-700"
+                ? "bg-blue-50 text-blue-700 ring-1 ring-inset ring-blue-100"
                 : "text-slate-600 hover:bg-slate-100 hover:text-slate-900",
             )}
           >
-            <Icon className="size-4" />
+            <Icon className={cn("size-4", active && "stroke-[2.25]")} />
             {compact ? null : item.label}
           </Link>
         );

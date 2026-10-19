@@ -52,6 +52,12 @@ const categoryLabels: Record<string, string> = {
   autre: "Autre",
 };
 
+function priorityLabel(priority: number | null) {
+  if (priority === 3) return "Priorité haute";
+  if (priority === 2) return "Priorité moyenne";
+  return "Priorité basse";
+}
+
 export function Dashboard() {
   const router = useRouter();
   const [date, setDate] = useState(todayValue);
@@ -149,20 +155,23 @@ export function Dashboard() {
                 <div key={stat.label} className="rounded-lg border border-slate-200 bg-white p-4 sm:p-5">
                   <div className="flex items-center justify-between gap-3">
                     <p className="text-sm font-medium text-slate-500">{stat.label}</p>
-                    <Icon className="size-4 text-slate-400" />
+                    <span className="flex size-8 items-center justify-center rounded-md bg-slate-50 text-slate-500">
+                      <Icon className="size-4" />
+                    </span>
                   </div>
-                  <p className="mt-3 text-2xl font-semibold tracking-tight text-slate-900">{stat.value}</p>
+                  <p className="mt-4 text-3xl font-semibold tracking-tight text-slate-900">{stat.value}</p>
                 </div>
               );
             })}
           </section>
 
+          <div className="grid min-w-0 gap-4 xl:grid-cols-[minmax(280px,0.75fr)_minmax(0,1.7fr)]">
           <section className="rounded-lg border border-slate-200 bg-white p-5 sm:p-6">
             <p className="text-xs font-semibold uppercase tracking-wider text-slate-400">Résumé quotidien</p>
-            <p className="mt-3 text-sm leading-6 text-slate-700">{summary.daily_summary}</p>
+            <p className="mt-4 text-[15px] leading-7 text-slate-700">{summary.daily_summary}</p>
           </section>
 
-          <section className="overflow-hidden rounded-lg border border-slate-200 bg-white">
+          <section className="min-w-0 overflow-hidden rounded-lg border border-slate-200 bg-white">
             <div className="flex items-center justify-between border-b border-slate-100 px-4 py-4 sm:px-5">
               <div>
                 <h2 className="text-sm font-semibold text-slate-900">E-mails prioritaires</h2>
@@ -186,28 +195,32 @@ export function Dashboard() {
                 <Link
                   key={email.id}
                   href={`/inbox/threads/${email.thread_id}`}
-                  className="group grid gap-3 border-b border-slate-100 px-4 py-4 outline-none last:border-b-0 hover:bg-slate-50/80 focus-visible:bg-blue-50/60 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-blue-500/30 sm:grid-cols-[32px_minmax(160px,0.8fr)_minmax(280px,1.8fr)_auto] sm:items-center sm:px-5"
+                  className="group relative grid gap-3 border-b border-slate-100 px-4 py-4 outline-none last:border-b-0 hover:bg-slate-50/80 focus-visible:bg-blue-50/60 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-blue-500/30 sm:grid-cols-[32px_minmax(140px,0.75fr)_minmax(220px,1.8fr)_auto] sm:items-center sm:px-5"
                   aria-label={`Ouvrir la conversation : ${email.subject || "Sans objet"}`}
                 >
                   <span className="flex size-8 items-center justify-center rounded-md bg-blue-50 text-xs font-semibold text-blue-700">
                     {index + 1}
                   </span>
                   <div className="min-w-0">
-                    <p className="truncate text-sm font-medium text-slate-800">{email.sender}</p>
+                    <p className="truncate text-sm font-semibold text-slate-900">{email.sender}</p>
                     <p className="mt-0.5 text-xs text-slate-400">{formatTime(email.received_at)}</p>
                   </div>
                   <div className="min-w-0">
                     <div className="flex items-center gap-2">
                       <p className="truncate text-sm font-medium text-slate-900">{email.subject || "Sans objet"}</p>
                       {email.category ? <Badge className="hidden shrink-0 lg:inline-flex">{categoryLabels[email.category] ?? email.category}</Badge> : null}
+                      <Badge className={email.priority === 3 ? "shrink-0 border-blue-200 bg-blue-50 text-blue-700" : "shrink-0"}>
+                        {priorityLabel(email.priority)}
+                      </Badge>
                     </div>
-                    <p className="mt-1 line-clamp-2 text-xs leading-5 text-slate-500">{email.reason}</p>
+                    <p className="mt-1 line-clamp-2 text-sm leading-5 text-slate-500">{email.reason}</p>
                   </div>
                   <ChevronRight className="hidden size-4 text-slate-300 transition-colors group-hover:text-blue-600 sm:block" />
                 </Link>
               ))
             )}
           </section>
+          </div>
         </div>
       ) : null}
     </div>
