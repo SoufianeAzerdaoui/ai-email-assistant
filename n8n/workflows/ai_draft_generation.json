@@ -16,7 +16,7 @@
       "position": [-880, 160],
       "webhookId": "draft-generation",
       "notesInFlow": true,
-      "notes": "Sélectionner après import un credential Header Auth configuré avec l'en-tête X-Webhook-Secret et la valeur N8N_WEBHOOK_SECRET. La réponse HTTP est immédiate; le traitement continue en arrière-plan."
+      "notes": "Credential requis : \"Mailflow - Entrée n8n\", Header Auth X-Webhook-Secret = N8N_WEBHOOK_SECRET. Ne jamais réutiliser le credential sortant. La réponse HTTP est immédiate."
     },
     {
       "parameters": {
@@ -183,7 +183,7 @@
       "maxTries": 3,
       "waitBetweenTries": 5000,
       "notesInFlow": true,
-      "notes": "Sélectionner après import un credential Header Auth configuré avec X-Webhook-Secret et la valeur WEBHOOK_SECRET du backend. BACKEND_URL doit être l'URL Docker de FastAPI, par exemple http://host.docker.internal:8000."
+      "notes": "Credential requis : \"Mailflow - Vers FastAPI\", Header Auth X-Webhook-Secret = WEBHOOK_SECRET du backend. Ne jamais réutiliser le credential entrant. BACKEND_URL doit viser FastAPI depuis Docker."
     }
   ],
   "connections": {

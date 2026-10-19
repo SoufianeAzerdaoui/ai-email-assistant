@@ -1,0 +1,347 @@
+{
+  "name": "Mailflow - Envoi Gmail sécurisé",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "gmail-send",
+        "authentication": "headerAuth",
+        "responseMode": "onReceived",
+        "options": {}
+      },
+      "id": "receive-gmail-send",
+      "name": "Recevoir demande d’envoi",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.2,
+      "position": [
+        -880,
+        160
+      ],
+      "webhookId": "gmail-send",
+      "notesInFlow": true,
+      "notes": "Credential requis : \"Mailflow - Entrée n8n\", Header Auth X-Webhook-Secret = N8N_WEBHOOK_SECRET. Ne jamais réutiliser le credential sortant. La réponse HTTP immédiate signifie seulement que n8n a accepté la tâche."
+    },
+    {
+      "parameters": {
+        "jsCode": "const payload = $json.body ?? {};\nconst uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;\nconst safeHeader = (value, max) => typeof value === 'string' && value.length > 0 && value.length <= max && !/[\\r\\n\\u0000]/.test(value);\nconst optionalHeader = (value, max) => value === null || value === undefined || (typeof value === 'string' && value.length <= max && !/[\\r\\n\\u0000]/.test(value));\nconst valid =\n  uuid.test(payload.reply_id ?? '') &&\n  uuid.test(payload.dispatch_id ?? '') &&\n  uuid.test(payload.user_id ?? '') &&\n  uuid.test(payload.email_id ?? '') &&\n  safeHeader(payload.idempotency_key, 255) &&\n  safeHeader(payload.gmail_message_id, 255) &&\n  safeHeader(payload.gmail_thread_id, 255) &&\n  optionalHeader(payload.rfc_message_id, 998) &&\n  safeHeader(payload.recipient, 998) &&\n  typeof payload.subject === 'string' && payload.subject.length <= 998 && !/[\\r\\n\\u0000]/.test(payload.subject) &&\n  typeof payload.body_text === 'string' && payload.body_text.trim().length > 0 &&\n  payload.body_text.length <= 100000 && !payload.body_text.includes('\\u0000');\n\nreturn [{ json: {\n  valid,\n  reply_id: payload.reply_id ?? '',\n  dispatch_id: payload.dispatch_id ?? '',\n  user_id: payload.user_id ?? '',\n  email_id: payload.email_id ?? '',\n  idempotency_key: payload.idempotency_key ?? '',\n  gmail_message_id: payload.gmail_message_id ?? '',\n  gmail_thread_id: payload.gmail_thread_id ?? '',\n  rfc_message_id: payload.rfc_message_id ?? null,\n  recipient: payload.recipient ?? '',\n  subject: payload.subject ?? '',\n  body_text: payload.body_text ?? '',\n  error_message: valid ? undefined : 'Payload d’envoi Gmail invalide.'\n} }];"
+      },
+      "id": "validate-gmail-send",
+      "name": "Valider demande",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -656,
+        160
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "gmail-send-valid",
+              "leftValue": "={{ $json.valid }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "gmail-send-valid",
+      "name": "Demande valide ?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        -432,
+        160
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const request = $json;\nconst encodeHeader = (value) => '=?UTF-8?B?' + Buffer.from(value, 'utf8').toString('base64') + '?=';\nconst subject = request.subject;\nconst reference = request.rfc_message_id\n  ? (request.rfc_message_id.startsWith('<') ? request.rfc_message_id : '<' + request.rfc_message_id + '>')\n  : null;\nconst encodedBody = Buffer.from(request.body_text, 'utf8').toString('base64').match(/.{1,76}/g)?.join('\\r\\n') ?? '';\nconst headers = [\n  'To: ' + request.recipient,\n  'Subject: ' + encodeHeader(subject),\n  'Message-ID: <mailflow-' + request.reply_id + '@mailflow.invalid>',\n  'X-Mailflow-Idempotency-Key: ' + request.idempotency_key,\n  'MIME-Version: 1.0',\n  'Content-Type: text/plain; charset=UTF-8',\n  'Content-Transfer-Encoding: base64'\n];\nif (reference) {\n  headers.splice(2, 0, 'In-Reply-To: ' + reference, 'References: ' + reference);\n}\nconst mime = headers.join('\\r\\n') + '\\r\\n\\r\\n' + encodedBody;\nconst raw = Buffer.from(mime, 'utf8').toString('base64')\n  .replace(/\\+/g, '-').replace(/\\//g, '_').replace(/=+$/g, '');\nreturn [{ json: { ...request, raw } }];"
+      },
+      "id": "prepare-mime",
+      "name": "Préparer message MIME",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -176,
+        32
+      ],
+      "notesInFlow": true,
+      "notes": "Construit une réponse texte avec threadId Gmail, In-Reply-To, References et un Message-ID stable dérivé de reply_id."
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://gmail.googleapis.com/gmail/v1/users/me/messages/send",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "gmailOAuth2",
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{ { raw: $json.raw, threadId: $json.gmail_thread_id } }}",
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true,
+              "responseFormat": "json"
+            }
+          },
+          "timeout": 60000
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Accept",
+              "value": "application/json"
+            },
+            {
+              "name": "Accept-Encoding",
+              "value": "identity"
+            }
+          ]
+        }
+      },
+      "id": "send-gmail-reply",
+      "name": "Envoyer réponse Gmail",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        80,
+        32
+      ],
+      "continueOnFail": true,
+      "notesInFlow": true,
+      "notes": "Sélectionner le credential Gmail OAuth2 existant. Le corps doit rester configuré en JSON : avec Raw, n8n 2.43 force une réponse en flux et masque id/threadId. Aucun retry automatique sur messages.send : une réponse perdue après acceptation par Gmail pourrait produire un doublon."
+    },
+    {
+      "parameters": {
+        "jsCode": "const request = $('Préparer message MIME').item.json;\nconst hasStatusCode = $json.statusCode !== undefined && $json.statusCode !== null;\nconst statusCode = hasStatusCode ? Number($json.statusCode) : null;\nconst isRecord = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);\nlet responseBody = {};\nif (isRecord($json.body) && !('_readableState' in $json.body) && !('_outBuffer' in $json.body)) {\n  responseBody = $json.body;\n} else if (typeof $json.body === 'string') {\n  try {\n    const parsed = JSON.parse($json.body);\n    if (isRecord(parsed)) responseBody = parsed;\n  } catch {\n    responseBody = {};\n  }\n} else if (typeof $json.id === 'string') {\n  responseBody = $json;\n}\n\nconst gmailMessageId = typeof responseBody.id === 'string' ? responseBody.id.trim() : '';\nconst responseThreadId = typeof responseBody.threadId === 'string' ? responseBody.threadId.trim() : '';\nconst gmailThreadId = responseThreadId || request.gmail_thread_id;\nconst successfulHttpStatus = !hasStatusCode || (statusCode >= 200 && statusCode < 300);\nconst confirmedSent = successfulHttpStatus &&\n  gmailMessageId.length > 0 && gmailMessageId.length <= 255;\n\nconst base = {\n  reply_id: request.reply_id,\n  dispatch_id: request.dispatch_id,\n  user_id: request.user_id,\n  email_id: request.email_id,\n  idempotency_key: request.idempotency_key\n};\n\nif (confirmedSent) {\n  return [{ json: {\n    ...base,\n    callback_allowed: true,\n    status: 'sent',\n    gmail_message_id: gmailMessageId,\n    gmail_thread_id: gmailThreadId\n  } }];\n}\n\nif (hasStatusCode && statusCode >= 400 && statusCode < 500 && statusCode !== 408) {\n  return [{ json: {\n    ...base,\n    callback_allowed: true,\n    status: 'failed',\n    error_message: 'Gmail API a refusé la requête (HTTP ' + statusCode + ').'\n  } }];\n}\n\nreturn [{ json: {\n  ...base,\n  callback_allowed: false,\n  status: 'ambiguous',\n  error_message: 'Résultat Gmail ambigu. Aucun nouvel envoi ne doit être tenté automatiquement.'\n} }];"
+      },
+      "id": "prepare-gmail-result",
+      "name": "Préparer résultat Gmail",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        336,
+        32
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "return [{ json: {\n  reply_id: $json.reply_id,\n  dispatch_id: $json.dispatch_id,\n  user_id: $json.user_id,\n  email_id: $json.email_id,\n  idempotency_key: $json.idempotency_key,\n  status: 'failed',\n  error_message: String($json.error_message || 'Payload d’envoi Gmail invalide.').slice(0, 2000)\n} }];"
+      },
+      "id": "prepare-invalid-result",
+      "name": "Préparer échec de validation",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        336,
+        272
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.BACKEND_URL }}/internal/webhooks/gmail-send-result",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "contentType": "raw",
+        "rawContentType": "application/json",
+        "body": "={{ JSON.stringify($json) }}",
+        "options": {
+          "timeout": 60000
+        }
+      },
+      "id": "gmail-send-callback",
+      "name": "Callback FastAPI",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        800,
+        32
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000,
+      "notesInFlow": true,
+      "notes": "Credential requis : \"Mailflow - Vers FastAPI\", Header Auth X-Webhook-Secret = WEBHOOK_SECRET du backend. Un échec reste visible et ne reboucle jamais vers messages.send; seul le callback idempotent est retenté. BACKEND_URL doit viser FastAPI depuis Docker."
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "gmail-result-certain",
+              "leftValue": "={{ $json.callback_allowed }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "gmail-result-certain",
+      "name": "Résultat certain ?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        560,
+        32
+      ]
+    },
+    {
+      "parameters": {
+        "errorType": "errorMessage",
+        "errorMessage": "=Résultat Gmail ambigu pour la demande {{ $json.reply_id }}. Aucun callback d'échec et aucune relance de messages.send n'ont été exécutés."
+      },
+      "id": "stop-ambiguous-gmail-result",
+      "name": "Suspendre résultat ambigu",
+      "type": "n8n-nodes-base.stopAndError",
+      "typeVersion": 1,
+      "position": [
+        800,
+        176
+      ],
+      "notesInFlow": true,
+      "notes": "Conserve la réponse FastAPI en sending. Réconcilier avec l'ID Gmail observé, sans réexécuter messages.send."
+    }
+  ],
+  "connections": {
+    "Recevoir demande d’envoi": {
+      "main": [
+        [
+          {
+            "node": "Valider demande",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Valider demande": {
+      "main": [
+        [
+          {
+            "node": "Demande valide ?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Demande valide ?": {
+      "main": [
+        [
+          {
+            "node": "Préparer message MIME",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Préparer échec de validation",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Préparer message MIME": {
+      "main": [
+        [
+          {
+            "node": "Envoyer réponse Gmail",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Envoyer réponse Gmail": {
+      "main": [
+        [
+          {
+            "node": "Préparer résultat Gmail",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Préparer résultat Gmail": {
+      "main": [
+        [
+          {
+            "node": "Résultat certain ?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Préparer échec de validation": {
+      "main": [
+        [
+          {
+            "node": "Callback FastAPI",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Résultat certain ?": {
+      "main": [
+        [
+          {
+            "node": "Callback FastAPI",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Suspendre résultat ambigu",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "tags": []
+}

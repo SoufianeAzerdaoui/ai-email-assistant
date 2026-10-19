@@ -14,13 +14,13 @@ warnings.filterwarnings(
 )
 
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, func, select
 from sqlalchemy.orm import Session
 
 from app.config import get_webhook_secret
 from app.database import get_db
 from app.main import app
-from app.models import Email, Thread, User
+from app.models import Email, Thread, User, WorkflowError
 
 
 @unittest.skipUnless(os.environ.get("TEST_DATABASE_URL"), "TEST_DATABASE_URL is required")
@@ -108,6 +108,26 @@ class ClassificationWebhookTests(unittest.TestCase):
         self.assertEqual(self.email.summary, self.payload["summary"])
         self.assertEqual(self.email.expected_action, self.payload["expected_action"])
 
+    def test_callback_is_idempotent_and_rejects_conflicting_result(self):
+        first = self.client.post(
+            "/internal/webhooks/classification", headers=self.headers, json=self.payload
+        )
+        replay = self.client.post(
+            "/internal/webhooks/classification", headers=self.headers, json=self.payload
+        )
+        conflict = self.client.post(
+            "/internal/webhooks/classification",
+            headers=self.headers,
+            json={**self.payload, "priority": 1},
+        )
+
+        self.assertEqual(first.status_code, 200)
+        self.assertEqual(replay.status_code, 200)
+        self.assertEqual(replay.json(), first.json())
+        self.assertEqual(conflict.status_code, 409)
+        self.session.refresh(self.email)
+        self.assertEqual(self.email.priority, 3)
+
     def test_requires_valid_shared_secret(self):
         missing = self.client.post("/internal/webhooks/classification", json=self.payload)
         invalid = self.client.post(
@@ -156,3 +176,49 @@ class ClassificationWebhookTests(unittest.TestCase):
 
         self.session.refresh(self.email)
         self.assertIsNone(self.email.category)
+
+    def test_workflow_errors_are_secure_scoped_and_idempotent(self):
+        payload = {
+            "user_id": str(self.user.id),
+            "email_id": str(self.email.id),
+            "idempotency_key": f"classification:{self.email.id}:gemini",
+            "workflow_name": "Mailflow - Classification IA",
+            "node_name": "Classification Gemini",
+            "error_type": "gemini_unavailable",
+            "status_code": 503,
+            "attempt": 2,
+        }
+        first = self.client.post(
+            "/internal/webhooks/workflow-errors", headers=self.headers, json=payload
+        )
+        replay = self.client.post(
+            "/internal/webhooks/workflow-errors", headers=self.headers, json=payload
+        )
+
+        self.assertEqual(first.status_code, 200)
+        self.assertTrue(first.json()["created"])
+        self.assertEqual(replay.status_code, 200)
+        self.assertFalse(replay.json()["created"])
+        self.assertEqual(replay.json()["id"], first.json()["id"])
+        error = self.session.get(WorkflowError, first.json()["id"])
+        self.assertEqual(error.message, "Gemini classification failed after bounded retries")
+        self.assertEqual(error.details["email_id"], str(self.email.id))
+        self.assertNotIn(os.environ["WEBHOOK_SECRET"], str(error.details))
+        self.assertEqual(self.session.scalar(
+            select(func.count()).select_from(WorkflowError).where(
+                WorkflowError.user_id == self.user.id
+            )
+        ), 1)
+
+        wrong_user = self.client.post(
+            "/internal/webhooks/workflow-errors",
+            headers=self.headers,
+            json={**payload, "user_id": str(self.other_user.id)},
+        )
+        raw_message = self.client.post(
+            "/internal/webhooks/workflow-errors",
+            headers=self.headers,
+            json={**payload, "raw_error": "secret-bearing stack"},
+        )
+        self.assertEqual(wrong_user.status_code, 404)
+        self.assertEqual(raw_message.status_code, 422)

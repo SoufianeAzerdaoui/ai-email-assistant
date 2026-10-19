@@ -1,0 +1,61 @@
+{
+  "name": "Mailflow - Gestion erreurs n8n",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "error-trigger",
+      "name": "Erreur workflow",
+      "type": "n8n-nodes-base.errorTrigger",
+      "typeVersion": 1,
+      "position": [-400, 160]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const event = $json || {};\nconst userId = String($env.MAILFLOW_USER_ID || '').trim();\nconst uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;\nif (!uuid.test(userId)) throw new Error('MAILFLOW_USER_ID doit contenir un UUID valide.');\nconst workflowName = String(event.workflow?.name || 'Workflow n8n').slice(0, 255);\nconst workflowId = String(event.workflow?.id || 'unknown').slice(0, 80);\nconst executionId = String(event.execution?.id || `manual-${Date.now()}`).slice(0, 80);\nconst nodeName = event.execution?.lastNodeExecuted ? String(event.execution.lastNodeExecuted).slice(0, 255) : null;\nreturn [{ json: {\n  user_id: userId,\n  email_id: null,\n  idempotency_key: `n8n-error:${workflowId}:${executionId}`.slice(0, 255),\n  workflow_name: workflowName,\n  node_name: nodeName,\n  error_type: 'workflow_failed',\n  status_code: null,\n  attempt: null\n} }];"
+      },
+      "id": "sanitize-error",
+      "name": "Préparer erreur sûre",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-176, 160],
+      "notesInFlow": true,
+      "notes": "Ne transmet jamais le message brut, la stack, les données d'e-mail, les headers ou les credentials de l'exécution en échec."
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.BACKEND_URL }}/internal/webhooks/workflow-errors",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{ $json }}",
+        "options": {"timeout": 30000}
+      },
+      "id": "store-error",
+      "name": "Journaliser dans FastAPI",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [48, 160],
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 5000,
+      "notesInFlow": true,
+      "notes": "Credential requis : \"Mailflow - Vers FastAPI\", Header Auth X-Webhook-Secret = WEBHOOK_SECRET. Aucun credential n'est inclus dans l'export."
+    }
+  ],
+  "connections": {
+    "Erreur workflow": {
+      "main": [[{"node": "Préparer erreur sûre", "type": "main", "index": 0}]]
+    },
+    "Préparer erreur sûre": {
+      "main": [[{"node": "Journaliser dans FastAPI", "type": "main", "index": 0}]]
+    }
+  },
+  "pinData": {},
+  "active": false,
+  "settings": {"executionOrder": "v1"},
+  "tags": []
+}

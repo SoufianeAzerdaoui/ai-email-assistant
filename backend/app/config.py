@@ -47,12 +47,21 @@ class N8nDraftSettings:
     timeout_seconds: float
 
 
+@dataclass(frozen=True)
+class N8nGmailSendSettings:
+    webhook_url: str
+    webhook_secret: str
+    timeout_seconds: float
+
+
 @lru_cache
 def get_n8n_draft_settings() -> N8nDraftSettings:
     webhook_url = os.environ.get("N8N_DRAFT_WEBHOOK_URL", "")
     parsed_url = urlparse(webhook_url)
     if parsed_url.scheme not in {"http", "https"} or not parsed_url.netloc:
         raise RuntimeError("N8N_DRAFT_WEBHOOK_URL must be an HTTP(S) URL")
+    if not parsed_url.path.startswith("/webhook/"):
+        raise RuntimeError("N8N_DRAFT_WEBHOOK_URL must use the production /webhook/ path")
     webhook_secret = os.environ.get("N8N_WEBHOOK_SECRET", "")
     if len(webhook_secret) < 32:
         raise RuntimeError("N8N_WEBHOOK_SECRET must contain at least 32 characters")
@@ -63,3 +72,23 @@ def get_n8n_draft_settings() -> N8nDraftSettings:
     if timeout_seconds <= 0:
         raise RuntimeError("N8N_REQUEST_TIMEOUT_SECONDS must be greater than zero")
     return N8nDraftSettings(webhook_url, webhook_secret, timeout_seconds)
+
+
+@lru_cache
+def get_n8n_gmail_send_settings() -> N8nGmailSendSettings:
+    webhook_url = os.environ.get("N8N_GMAIL_SEND_WEBHOOK_URL", "")
+    parsed_url = urlparse(webhook_url)
+    if parsed_url.scheme not in {"http", "https"} or not parsed_url.netloc:
+        raise RuntimeError("N8N_GMAIL_SEND_WEBHOOK_URL must be an HTTP(S) URL")
+    if not parsed_url.path.startswith("/webhook/"):
+        raise RuntimeError("N8N_GMAIL_SEND_WEBHOOK_URL must use the production /webhook/ path")
+    webhook_secret = os.environ.get("N8N_WEBHOOK_SECRET", "")
+    if len(webhook_secret) < 32:
+        raise RuntimeError("N8N_WEBHOOK_SECRET must contain at least 32 characters")
+    try:
+        timeout_seconds = float(os.environ.get("N8N_REQUEST_TIMEOUT_SECONDS", "10"))
+    except ValueError as error:
+        raise RuntimeError("N8N_REQUEST_TIMEOUT_SECONDS must be a number") from error
+    if timeout_seconds <= 0:
+        raise RuntimeError("N8N_REQUEST_TIMEOUT_SECONDS must be greater than zero")
+    return N8nGmailSendSettings(webhook_url, webhook_secret, timeout_seconds)

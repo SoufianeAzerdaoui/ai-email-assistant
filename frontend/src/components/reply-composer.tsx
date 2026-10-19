@@ -287,7 +287,7 @@ export function ReplyComposer({ emailId }: { emailId: string }) {
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h2 id="reply-title" className="text-sm font-semibold text-slate-900">Rédiger une réponse</h2>
-          <p className="mt-1 text-xs text-slate-500">L’envoi réel n’est pas encore activé.</p>
+          <p className="mt-1 text-xs text-slate-500">L’envoi nécessite votre confirmation.</p>
         </div>
         {status ? (
           <span className={`inline-flex w-fit items-center gap-1.5 rounded-md border px-2 py-1 text-xs font-medium ${status.className}`}>
@@ -355,7 +355,7 @@ export function ReplyComposer({ emailId }: { emailId: string }) {
         <div className="mt-4 rounded-md border border-blue-200 bg-blue-50 p-3">
           <p className="text-sm font-medium text-slate-900">Confirmer la demande d’envoi ?</p>
           <p className="mt-1 text-xs leading-5 text-slate-600">
-            La demande sera enregistrée en attente. Aucun e-mail Gmail ne sera envoyé maintenant.
+            Après confirmation, cette réponse sera envoyée dans le fil Gmail d’origine.
           </p>
           <div className="mt-3 flex flex-wrap gap-2">
             <Button type="button" onClick={confirmReply} disabled={busy}>

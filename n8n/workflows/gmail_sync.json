@@ -1,0 +1,1457 @@
+{
+  "name": "Mailflow - Gmail Sync",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "manual-trigger",
+      "name": "Test manuel",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        -1680,
+        80
+      ],
+      "notesInFlow": true,
+      "notes": "Valider le mode TEST puis le mode normal avant d'activer la planification."
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 10
+            }
+          ]
+        }
+      },
+      "id": "schedule-trigger",
+      "name": "Toutes les 10 minutes",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.4,
+      "position": [
+        -1680,
+        272
+      ],
+      "disabled": true,
+      "notesInFlow": true,
+      "notes": "Ce déclencheur reste désactivé jusqu'à la validation manuelle complète."
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "mailflow-user-id",
+              "name": "user_id",
+              "value": "",
+              "type": "string"
+            },
+            {
+              "id": "mailflow-test-mode",
+              "name": "test_mode",
+              "value": true,
+              "type": "boolean"
+        },
+        {
+          "id": "mailflow-classify-test-mode",
+          "name": "classify_in_test_mode",
+          "value": false,
+          "type": "boolean"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "configure-user",
+      "name": "Configurer utilisateur",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        -1456,
+        176
+      ],
+      "notesInFlow": true,
+      "notes": "Renseigner l'UUID Mailflow. test_mode=true limite la liste à 50 messages et interdit tout commit de historyId. classify_in_test_mode=false empêche une analyse Gemini massive pendant les essais."
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const userId = String($json.user_id || '').trim();\nconst uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;\nif (!uuid.test(userId)) throw new Error('Renseignez un UUID Mailflow valide dans Configurer utilisateur.');\nif (typeof $json.test_mode !== 'boolean') throw new Error('test_mode doit être un booléen.');\nif (typeof $json.classify_in_test_mode !== 'boolean') throw new Error('classify_in_test_mode doit être un booléen.');\nreturn [{ json: { user_id: userId, test_mode: $json.test_mode, classify_in_test_mode: $json.classify_in_test_mode } }];"
+      },
+      "id": "validate-user",
+      "name": "Valider utilisateur",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1232,
+        176
+      ]
+    },
+    {
+      "parameters": {
+        "url": "=http://host.docker.internal:8000/internal/webhooks/gmail/sync-state/{{ $json.user_id }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "id": "read-sync-state",
+      "name": "Lire curseur FastAPI",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        -1008,
+        176
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000,
+      "notesInFlow": true,
+      "notes": "Credential requis : \"Mailflow - Vers FastAPI\", Header Auth X-Webhook-Secret = WEBHOOK_SECRET du backend. Ne jamais utiliser le credential entrant n8n."
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://host.docker.internal:8000/internal/webhooks/gmail/sync-state/claim",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{ { user_id: $json.user_id, idempotency_key: `gmail-sync:${$execution.id}` } }}",
+        "options": {"timeout": 30000}
+      },
+      "id": "claim-sync-state",
+      "name": "Réserver synchronisation FastAPI",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [-672, 160],
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 5000,
+      "notesInFlow": true,
+      "notes": "Credential requis : \"Mailflow - Vers FastAPI\". Le backend refuse une seconde synchronisation normale tant que le verrou de 30 minutes de la précédente est actif. Le mode TEST ne réserve aucun verrou."
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "test-mode-enabled",
+              "leftValue": "={{ $('Configurer utilisateur').first().json.test_mode === true }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "test-mode-enabled",
+      "name": "Mode TEST ?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        -784,
+        176
+      ]
+    },
+    {
+      "parameters": {
+        "url": "https://gmail.googleapis.com/gmail/v1/users/me/messages",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "gmailOAuth2Api",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "maxResults",
+              "value": "50"
+            }
+          ]
+        },
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "responseFormat": "json"
+            }
+          },
+          "timeout": 60000
+        }
+      },
+      "id": "gmail-list-test",
+      "name": "Lister 50 IDs Gmail (TEST)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        -560,
+        464
+      ],
+      "retryOnFail": true,
+      "maxTries": 6,
+      "waitBetweenTries": 5000,
+      "notesInFlow": true,
+      "notes": "Sélectionner le credential Gmail OAuth2 existant. maxResults=50 est une limite totale : aucune pagination n'est activée sur ce nœud."
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const state = $('Lire curseur FastAPI').first().json;\nconst config = $('Configurer utilisateur').first().json;\nconst response = $json;\nif (response.statusCode !== 200) throw new Error(`Gmail messages.list TEST a répondu HTTP ${response.statusCode}.`);\nconst messages = Array.isArray(response.body?.messages) ? response.body.messages : [];\nif (messages.length > 50) throw new Error('Le mode TEST a reçu plus de 50 identifiants Gmail.');\nconst sync = { user_id: state.user_id, cursor_before: state.cursor || null, cursor_after: null, mode: 'test', test_mode: true, classify_in_test_mode: config.classify_in_test_mode === true };\nconst ids = [...new Set(messages.map((message) => typeof message?.id === 'string' ? message.id.trim() : '').filter(Boolean))];\nif (ids.length === 0) return [{ json: { _empty: true, _sync: sync } }];\nreturn ids.map((id) => ({ json: { gmail_message_id: id, attempt: 0, _sync: sync } }));"
+      },
+      "id": "prepare-test-list",
+      "name": "Préparer liste TEST",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -336,
+        464
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "cursor-present",
+              "leftValue": "={{ typeof $json.cursor === 'string' && $json.cursor.length > 0 }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "cursor-present",
+      "name": "Curseur présent ?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        -560,
+        160
+      ]
+    },
+    {
+      "parameters": {
+        "url": "https://gmail.googleapis.com/gmail/v1/users/me/history",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "gmailOAuth2Api",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "startHistoryId",
+              "value": "={{ $json.cursor }}"
+            },
+            {
+              "name": "historyTypes",
+              "value": "messageAdded"
+            },
+            {
+              "name": "maxResults",
+              "value": "500"
+            }
+          ]
+        },
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true,
+              "responseFormat": "json"
+            }
+          },
+          "pagination": {
+            "pagination": {
+              "paginationMode": "updateAParameterInEachRequest",
+              "parameters": {
+                "parameters": [
+                  {
+                    "type": "qs",
+                    "name": "pageToken",
+                    "value": "={{ $response.body.nextPageToken }}"
+                  }
+                ]
+              },
+              "paginationCompleteWhen": "other",
+              "completeExpression": "={{ $response.statusCode !== 200 || !$response.body.nextPageToken }}",
+              "requestInterval": 1000
+            }
+          },
+          "timeout": 60000
+        }
+      },
+      "id": "gmail-history",
+      "name": "Lister historique Gmail",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        -336,
+        32
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000,
+      "notesInFlow": true,
+      "notes": "history.list ne récupère que des identifiants. La pagination attend une seconde entre les pages."
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "history-expired",
+              "leftValue": "={{ $json.statusCode === 404 }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "history-expired",
+      "name": "Curseur expiré ?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        -112,
+        32
+      ],
+      "notesInFlow": true,
+      "notes": "Un 404 de history.list déclenche une nouvelle liste complète sans effacer les messages déjà importés. Il est distinct d'un 404 messages.get."
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const state = $('Réserver synchronisation FastAPI').first().json;\nconst ids = new Set();\nlet cursorAfter = null;\nfor (const item of $input.all()) {\n  const response = item.json;\n  if (response.statusCode !== 200) throw new Error(`Gmail history.list a répondu HTTP ${response.statusCode}. Le curseur reste inchangé.`);\n  const body = response.body || {};\n  if (typeof body.historyId === 'string' && body.historyId.trim()) cursorAfter = body.historyId.trim();\n  for (const event of Array.isArray(body.history) ? body.history : []) {\n    for (const added of Array.isArray(event.messagesAdded) ? event.messagesAdded : []) {\n      const id = typeof added?.message?.id === 'string' ? added.message.id.trim() : '';\n      if (id) ids.add(id);\n    }\n  }\n}\nif (!cursorAfter) throw new Error('Gmail history.list n’a pas fourni de historyId final.');\nconst sync = { user_id: state.user_id, execution_id: state.execution_id, idempotency_key: `gmail-sync:${$execution.id}`, cursor_before: state.cursor, cursor_after: cursorAfter, mode: 'incremental', test_mode: false };\nif (ids.size === 0) return [{ json: { _empty: true, _sync: sync } }];\nreturn [...ids].map((id) => ({ json: { gmail_message_id: id, attempt: 0, _sync: sync } }));"
+      },
+      "id": "prepare-history",
+      "name": "Préparer historique Gmail",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        112,
+        96
+      ]
+    },
+    {
+      "parameters": {
+        "url": "https://gmail.googleapis.com/gmail/v1/users/me/profile",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "gmailOAuth2Api",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "id": "gmail-profile",
+      "name": "Lire profil Gmail",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        -336,
+        288
+      ],
+      "retryOnFail": true,
+      "maxTries": 6,
+      "waitBetweenTries": 5000,
+      "notesInFlow": true,
+      "notes": "Le historyId est lu avant la pagination complète pour ne pas perdre les événements arrivés pendant l'import."
+    },
+    {
+      "parameters": {
+        "url": "https://gmail.googleapis.com/gmail/v1/users/me/messages",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "gmailOAuth2Api",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "maxResults",
+              "value": "500"
+            }
+          ]
+        },
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "responseFormat": "json"
+            }
+          },
+          "pagination": {
+            "pagination": {
+              "paginationMode": "updateAParameterInEachRequest",
+              "parameters": {
+                "parameters": [
+                  {
+                    "type": "qs",
+                    "name": "pageToken",
+                    "value": "={{ $response.body.nextPageToken }}"
+                  }
+                ]
+              },
+              "paginationCompleteWhen": "other",
+              "completeExpression": "={{ !$response.body.nextPageToken }}",
+              "requestInterval": 1000
+            }
+          },
+          "timeout": 60000
+        }
+      },
+      "id": "gmail-list-all",
+      "name": "Lister tous les IDs Gmail",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        -112,
+        288
+      ],
+      "retryOnFail": true,
+      "maxTries": 6,
+      "waitBetweenTries": 5000,
+      "notesInFlow": true,
+      "notes": "Pagination complète de messages.list. Seuls id et threadId sont chargés; aucun contenu de message n'est lu en masse."
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const state = $('Réserver synchronisation FastAPI').first().json;\nconst profile = $('Lire profil Gmail').first().json;\nconst cursorAfter = typeof profile.historyId === 'string' ? profile.historyId.trim() : '';\nif (!cursorAfter) throw new Error('Le profil Gmail n’a pas fourni de historyId.');\nconst ids = new Set();\nfor (const item of $input.all()) {\n  if (item.json.statusCode !== 200) throw new Error(`Gmail messages.list a répondu HTTP ${item.json.statusCode}.`);\n  for (const message of Array.isArray(item.json.body?.messages) ? item.json.body.messages : []) {\n    const id = typeof message?.id === 'string' ? message.id.trim() : '';\n    if (id) ids.add(id);\n  }\n}\nconst sync = { user_id: state.user_id, execution_id: state.execution_id, idempotency_key: `gmail-sync:${$execution.id}`, cursor_before: state.cursor || null, cursor_after: cursorAfter, mode: state.cursor ? 'recovery' : 'initial', test_mode: false };\nif (ids.size === 0) return [{ json: { _empty: true, _sync: sync } }];\nreturn [...ids].map((id) => ({ json: { gmail_message_id: id, attempt: 0, _sync: sync } }));"
+      },
+      "id": "prepare-full-list",
+      "name": "Préparer liste complète",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        112,
+        288
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "has-message",
+              "leftValue": "={{ !$json._empty }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "has-messages",
+      "name": "Messages à traiter ?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        352,
+        176
+      ]
+    },
+    {
+      "parameters": {
+        "batchSize": 1,
+        "options": {}
+      },
+      "id": "message-loop",
+      "name": "Traiter un message à la fois",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        576,
+        96
+      ],
+      "notesInFlow": true,
+      "notes": "Un seul messages.get est exécuté à la fois. La sortie done est la seule voie vers le commit du curseur."
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const item = $json;\nif (!item.gmail_message_id || !item._sync) throw new Error('Élément Gmail incomplet dans la file.');\nreturn [{ json: { ...item, attempt: Number.isInteger(item.attempt) ? item.attempt : 0 } }];"
+      },
+      "id": "prepare-detail-request",
+      "name": "Préparer requête détail",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        800,
+        176
+      ]
+    },
+    {
+      "parameters": {
+        "url": "=https://gmail.googleapis.com/gmail/v1/users/me/messages/{{ $json.gmail_message_id }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "gmailOAuth2Api",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "format",
+              "value": "full"
+            }
+          ]
+        },
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true,
+              "responseFormat": "json"
+            }
+          },
+          "timeout": 60000
+        }
+      },
+      "id": "gmail-get-detail",
+      "name": "Récupérer détail Gmail",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        1024,
+        176
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000,
+      "notesInFlow": true,
+      "notes": "Lecture messages.get séquentielle. Les réponses HTTP 403/429 sont conservées pour le backoff explicite."
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const request = $('Préparer requête détail').item.json;\nconst response = $json;\nconst statusCode = Number(response.statusCode || 0);\nconst error = response.body?.error || {};\nconst reasons = Array.isArray(error.errors) ? error.errors.map((entry) => String(entry?.reason || '')) : [];\nconst errorMessage = String(error.message || '');\nconst quotaReason = reasons.some((reason) => ['rateLimitExceeded', 'userRateLimitExceeded', 'quotaExceeded'].includes(reason));\nconst quotaText = /quota|rate.?limit/i.test(errorMessage);\nconst notFound = statusCode === 404;\nconst retryable = statusCode === 429 || (statusCode === 403 && (quotaReason || quotaText));\nconst attempt = Number.isInteger(request.attempt) ? request.attempt : 0;\nconst jitter = Math.random();\nconst backoffSeconds = Math.min(32, 2 ** attempt) + jitter;\nreturn [{ json: { ...request, status_code: statusCode, not_found: notFound, retryable, retry_reasons: reasons, error_message: errorMessage, backoff_seconds: backoffSeconds, gmail_response: response.body || {} } }];"
+      },
+      "id": "analyze-gmail-response",
+      "name": "Analyser réponse Gmail",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1248,
+        176
+      ],
+      "notesInFlow": true,
+      "notes": "Distingue le 404 messages.get et détecte les 429 ainsi que les 403 de quota. Le délai suit min(2^tentative, 32 s) avec jitter."
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "detail-ok",
+              "leftValue": "={{ $json.status_code === 200 }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "detail-ok",
+      "name": "Détail récupéré ?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1472,
+        176
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "can-retry",
+              "leftValue": "={{ $json.retryable === true && $json.attempt < 6 }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "can-retry",
+      "name": "Retry quota possible ?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1696,
+        288
+      ]
+    },
+    {
+      "parameters": {
+        "resume": "timeInterval",
+        "amount": "={{ $json.backoff_seconds }}",
+        "unit": "seconds"
+      },
+      "id": "wait-backoff",
+      "name": "Attendre backoff exponentiel",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        1920,
+        240
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "return $input.all().map((item) => ({ json: { ...item.json, attempt: item.json.attempt + 1 } }));"
+      },
+      "id": "increment-attempt",
+      "name": "Incrémenter tentative",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2144,
+        240
+      ]
+    },
+    {
+      "parameters": {
+        "errorType": "errorMessage",
+        "errorMessage": "=Échec Gmail définitif pour {{ $json.gmail_message_id }} : HTTP {{ $json.status_code }} {{ $json.error_message }}. Le curseur n'a pas été avancé."
+      },
+      "id": "stop-gmail-error",
+      "name": "Arrêter sans avancer curseur",
+      "type": "n8n-nodes-base.stopAndError",
+      "typeVersion": 1,
+      "position": [
+        1920,
+        368
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const item = $json;\nconst source = item.gmail_response || {};\nconst headers = Array.isArray(source.payload?.headers) ? source.payload.headers : [];\nconst header = (name) => {\n  const found = headers.find((entry) => String(entry?.name || '').toLowerCase() === name.toLowerCase());\n  return typeof found?.value === 'string' ? found.value.trim() : '';\n};\nconst decode = (value) => {\n  if (typeof value !== 'string' || !value) return '';\n  const normalized = value.replace(/-/g, '+').replace(/_/g, '/');\n  return Buffer.from(normalized, 'base64').toString('utf8');\n};\nconst plain = [];\nconst html = [];\nconst visit = (part) => {\n  if (!part || typeof part !== 'object') return;\n  const mime = String(part.mimeType || '').toLowerCase();\n  const filename = String(part.filename || '').trim();\n  const data = part.body?.data;\n  if (!filename && mime === 'text/plain' && data) plain.push(decode(data));\n  if (!filename && mime === 'text/html' && data) html.push(decode(data));\n  for (const child of Array.isArray(part.parts) ? part.parts : []) visit(child);\n};\nvisit(source.payload);\nconst sender = header('From');\nconst receivedAt = /^\\d+$/.test(String(source.internalDate || '')) ? new Date(Number(source.internalDate)) : new Date(header('Date'));\nif (!source.id || !source.threadId || !sender || Number.isNaN(receivedAt.getTime())) throw new Error(`Message Gmail ${item.gmail_message_id} incomplet.`);\nconst recipients = [...new Set([header('To'), header('Cc'), header('Bcc')].filter(Boolean))];\nreturn [{ json: {\n  _sync: item._sync, gmail_message_id: String(source.id), gmail_thread_id: String(source.threadId),\n  message_id: header('Message-ID') || null, sender, recipients, subject: header('Subject'),\n  body_text: plain.join('\\n\\n'), body_html: html.length ? html.join('\\n') : null, received_at: receivedAt.toISOString()\n} }];"
+      },
+      "id": "normalize-message",
+      "name": "Normaliser message Gmail",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1696,
+        96
+      ],
+      "notesInFlow": true,
+      "notes": "Décode les parties MIME text/plain et text/html sans pièces jointes. Le backend conserve sa conversion HTML sécurisée."
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://host.docker.internal:8000/internal/webhooks/gmail/messages",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{ { user_id: $json._sync.user_id, messages: [{ gmail_message_id: $json.gmail_message_id, gmail_thread_id: $json.gmail_thread_id, message_id: $json.message_id, sender: $json.sender, recipients: $json.recipients, subject: $json.subject, body_text: $json.body_text, body_html: $json.body_html, received_at: $json.received_at }] } }}",
+        "options": {
+          "timeout": 60000
+        }
+      },
+      "id": "import-fastapi",
+      "name": "Importer message FastAPI",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        1920,
+        96
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000,
+      "notesInFlow": true,
+      "notes": "Credential requis : \"Mailflow - Vers FastAPI\", Header Auth X-Webhook-Secret = WEBHOOK_SECRET du backend. Ne jamais utiliser le credential entrant n8n. Les retries concernent uniquement cet appel FastAPI."
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const message = $('Normaliser message Gmail').item.json;\nconst importedCount = Number.isInteger($json.imported_count) ? $json.imported_count : 0;\nconst tasks = Array.isArray($json.classification_tasks) ? $json.classification_tasks : [];\nconst classificationTask = importedCount === 1 && tasks.length === 1 ? tasks[0] : null;\nreturn [{ json: { _sync: message._sync, gmail_message_id: message.gmail_message_id, imported_count: importedCount, classification_task: classificationTask } }];"
+      },
+      "id": "preserve-import-result",
+      "name": "Conserver résultat import",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2144,
+        96
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {"caseSensitive": true, "leftValue": "", "typeValidation": "strict", "version": 2},
+          "conditions": [{
+            "id": "classification-needed",
+            "leftValue": "={{ $json.classification_task !== null && ($json._sync.test_mode !== true || $json._sync.classify_in_test_mode === true) }}",
+            "rightValue": true,
+            "operator": {"type": "boolean", "operation": "true", "singleValue": true}
+          }],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "classification-needed",
+      "name": "Classification nécessaire ?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [2368, 96],
+      "notesInFlow": true,
+      "notes": "Vrai uniquement lorsque PostgreSQL confirme qu'un nouvel e-mail Gmail a été créé. Les doublons et réparations ne sont jamais reclassifiés."
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://127.0.0.1:5678/webhook/classification",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{ $json.classification_task }}",
+        "options": {"timeout": 30000}
+      },
+      "id": "dispatch-classification",
+      "name": "Déclencher classification IA",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [2592, 32],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000,
+      "continueOnFail": true,
+      "notesInFlow": true,
+      "notes": "Credential requis : \"Mailflow - Entrée n8n\", Header Auth X-Webhook-Secret = N8N_WEBHOOK_SECRET. L'URL utilise le webhook de production ; l'échec n'annule jamais l'import ni le commit du curseur."
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const preserved = $('Conserver résultat import').item.json;\nconst statusCode = Number($json.statusCode ?? $json.error?.httpCode ?? 0) || null;\nconst accepted = $json.error === undefined && (statusCode === null || (statusCode >= 200 && statusCode < 300));\nreturn [{ json: { ...preserved, classification_dispatch_failed: !accepted, classification_status_code: statusCode } }];"
+      },
+      "id": "preserve-classification-dispatch",
+      "name": "Conserver résultat classification",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2816, 32]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {"caseSensitive": true, "leftValue": "", "typeValidation": "strict", "version": 2},
+          "conditions": [{
+            "id": "classification-accepted",
+            "leftValue": "={{ $json.classification_dispatch_failed === false }}",
+            "rightValue": true,
+            "operator": {"type": "boolean", "operation": "true", "singleValue": true}
+          }],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "classification-accepted",
+      "name": "Classification acceptée ?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [3040, 32]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://host.docker.internal:8000/internal/webhooks/workflow-errors",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{ { user_id: $json.classification_task.user_id, email_id: $json.classification_task.email_id, idempotency_key: `classification-dispatch:${$execution.id}:${$json.classification_task.email_id}`, workflow_name: 'Mailflow - Gmail Sync', node_name: 'Déclencher classification IA', error_type: 'classification_dispatch_failed', status_code: $json.classification_status_code, attempt: 3 } }}",
+        "options": {"timeout": 30000}
+      },
+      "id": "log-classification-dispatch-error",
+      "name": "Journaliser échec classification",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [3264, 144],
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 5000,
+      "continueOnFail": true,
+      "notesInFlow": true,
+      "notes": "Credential requis : \"Mailflow - Vers FastAPI\". Aucun contenu d'e-mail, message d'erreur brut ou secret n'est journalisé."
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "return [{ json: $('Conserver résultat classification').item.json }];"
+      },
+      "id": "restore-import-result",
+      "name": "Restaurer résultat import",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [3488, 144]
+    },
+    {
+      "parameters": {
+        "resume": "timeInterval",
+        "amount": 2.5,
+        "unit": "seconds"
+      },
+      "id": "wait-rate-limit",
+      "name": "Attendre 2,5 secondes",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        3488,
+        96
+      ],
+      "notesInFlow": true,
+      "notes": "Un message toutes les 2,5 secondes limite messages.get à environ 24 messages par minute."
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "cursor-commit-allowed",
+              "leftValue": "={{ $json._sync.test_mode !== true }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "cursor-commit-allowed",
+      "name": "Commit curseur autorisé ?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        800,
+        -32
+      ],
+      "notesInFlow": true,
+      "notes": "Le mode TEST sort par la branche false, sans appeler l'endpoint de commit."
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const items = $input.all();\nconst sync = items[0]?.json?._sync;\nif (!sync?.user_id || !sync?.execution_id || !sync?.idempotency_key || !sync?.cursor_after || sync.test_mode) throw new Error('Contexte de commit incomplet ou interdit.');\nlet importedCount = 0;\nlet skippedNotFound = 0;\nfor (const item of items) {\n  if (Number.isInteger(item.json?.imported_count)) importedCount += item.json.imported_count;\n  if (Number.isInteger(item.json?.skipped_not_found)) skippedNotFound += item.json.skipped_not_found;\n}\nreturn [{ json: { user_id: sync.user_id, execution_id: sync.execution_id, cursor_before: sync.cursor_before || null, cursor_after: sync.cursor_after, idempotency_key: sync.idempotency_key, imported_count: importedCount, skipped_not_found: skippedNotFound } }];"
+      },
+      "id": "prepare-commit",
+      "name": "Préparer commit curseur",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1024,
+        -32
+      ],
+      "notesInFlow": true,
+      "notes": "Atteint uniquement après la sortie done de la boucle ou une synchronisation normale vide. skipped_not_found reste une métrique n8n et n'est pas envoyé au contrat FastAPI existant."
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://host.docker.internal:8000/internal/webhooks/gmail/sync-state/commit",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{ { user_id: $json.user_id, execution_id: $json.execution_id, cursor_before: $json.cursor_before, cursor_after: $json.cursor_after, idempotency_key: $json.idempotency_key, imported_count: $json.imported_count } }}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "id": "commit-sync-state",
+      "name": "Valider curseur FastAPI",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        1248,
+        -32
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000,
+      "notes": "Credential requis : \"Mailflow - Vers FastAPI\", Header Auth X-Webhook-Secret = WEBHOOK_SECRET du backend. Ne jamais utiliser le credential entrant n8n. Les retries concernent uniquement cet appel FastAPI."
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "message-not-found",
+              "leftValue": "={{ $json.not_found === true }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "message-not-found",
+      "name": "Message introuvable ?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1696,
+        304
+      ],
+      "notesInFlow": true,
+      "notes": "Cette branche concerne uniquement le 404 de messages.get. Le 404 de history.list reste géré par Curseur expiré ?."
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const item = $json;\nreturn [{ json: { _sync: item._sync, gmail_message_id: item.gmail_message_id, imported_count: 0, skipped_not_found: 1 } }];"
+      },
+      "id": "count-message-not-found",
+      "name": "Comptabiliser message introuvable",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1920,
+        176
+      ],
+      "notesInFlow": true,
+      "notes": "N'appelle pas FastAPI pour ce message. Le compteur est agrégé à la fin de la boucle."
+    }
+  ],
+  "connections": {
+    "Test manuel": {
+      "main": [
+        [
+          {
+            "node": "Configurer utilisateur",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Toutes les 10 minutes": {
+      "main": [
+        [
+          {
+            "node": "Configurer utilisateur",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Configurer utilisateur": {
+      "main": [
+        [
+          {
+            "node": "Valider utilisateur",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Valider utilisateur": {
+      "main": [
+        [
+          {
+            "node": "Lire curseur FastAPI",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Lire curseur FastAPI": {
+      "main": [
+        [
+          {
+            "node": "Mode TEST ?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mode TEST ?": {
+      "main": [
+        [
+          {
+            "node": "Lister 50 IDs Gmail (TEST)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Réserver synchronisation FastAPI",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Réserver synchronisation FastAPI": {
+      "main": [[{"node": "Curseur présent ?", "type": "main", "index": 0}]]
+    },
+    "Lister 50 IDs Gmail (TEST)": {
+      "main": [
+        [
+          {
+            "node": "Préparer liste TEST",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Préparer liste TEST": {
+      "main": [
+        [
+          {
+            "node": "Messages à traiter ?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Curseur présent ?": {
+      "main": [
+        [
+          {
+            "node": "Lister historique Gmail",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Lire profil Gmail",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Lister historique Gmail": {
+      "main": [
+        [
+          {
+            "node": "Curseur expiré ?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Curseur expiré ?": {
+      "main": [
+        [
+          {
+            "node": "Lire profil Gmail",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Préparer historique Gmail",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Préparer historique Gmail": {
+      "main": [
+        [
+          {
+            "node": "Messages à traiter ?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Lire profil Gmail": {
+      "main": [
+        [
+          {
+            "node": "Lister tous les IDs Gmail",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Lister tous les IDs Gmail": {
+      "main": [
+        [
+          {
+            "node": "Préparer liste complète",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Préparer liste complète": {
+      "main": [
+        [
+          {
+            "node": "Messages à traiter ?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Messages à traiter ?": {
+      "main": [
+        [
+          {
+            "node": "Traiter un message à la fois",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Commit curseur autorisé ?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Traiter un message à la fois": {
+      "main": [
+        [
+          {
+            "node": "Commit curseur autorisé ?",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Préparer requête détail",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Préparer requête détail": {
+      "main": [
+        [
+          {
+            "node": "Récupérer détail Gmail",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Récupérer détail Gmail": {
+      "main": [
+        [
+          {
+            "node": "Analyser réponse Gmail",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Analyser réponse Gmail": {
+      "main": [
+        [
+          {
+            "node": "Détail récupéré ?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Détail récupéré ?": {
+      "main": [
+        [
+          {
+            "node": "Normaliser message Gmail",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Message introuvable ?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Retry quota possible ?": {
+      "main": [
+        [
+          {
+            "node": "Attendre backoff exponentiel",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Arrêter sans avancer curseur",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Attendre backoff exponentiel": {
+      "main": [
+        [
+          {
+            "node": "Incrémenter tentative",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Incrémenter tentative": {
+      "main": [
+        [
+          {
+            "node": "Préparer requête détail",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normaliser message Gmail": {
+      "main": [
+        [
+          {
+            "node": "Importer message FastAPI",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Importer message FastAPI": {
+      "main": [
+        [
+          {
+            "node": "Conserver résultat import",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Conserver résultat import": {
+      "main": [
+        [
+          {
+            "node": "Classification nécessaire ?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Classification nécessaire ?": {
+      "main": [
+        [{"node": "Déclencher classification IA", "type": "main", "index": 0}],
+        [{"node": "Attendre 2,5 secondes", "type": "main", "index": 0}]
+      ]
+    },
+    "Déclencher classification IA": {
+      "main": [[{"node": "Conserver résultat classification", "type": "main", "index": 0}]]
+    },
+    "Conserver résultat classification": {
+      "main": [[{"node": "Classification acceptée ?", "type": "main", "index": 0}]]
+    },
+    "Classification acceptée ?": {
+      "main": [
+        [{"node": "Attendre 2,5 secondes", "type": "main", "index": 0}],
+        [{"node": "Journaliser échec classification", "type": "main", "index": 0}]
+      ]
+    },
+    "Journaliser échec classification": {
+      "main": [[{"node": "Restaurer résultat import", "type": "main", "index": 0}]]
+    },
+    "Restaurer résultat import": {
+      "main": [[{"node": "Attendre 2,5 secondes", "type": "main", "index": 0}]]
+    },
+    "Attendre 2,5 secondes": {
+      "main": [
+        [
+          {
+            "node": "Traiter un message à la fois",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Commit curseur autorisé ?": {
+      "main": [
+        [
+          {
+            "node": "Préparer commit curseur",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    },
+    "Préparer commit curseur": {
+      "main": [
+        [
+          {
+            "node": "Valider curseur FastAPI",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Message introuvable ?": {
+      "main": [
+        [
+          {
+            "node": "Comptabiliser message introuvable",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Retry quota possible ?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Comptabiliser message introuvable": {
+      "main": [
+        [
+          {
+            "node": "Attendre 2,5 secondes",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true
+  },
+  "tags": []
+}
