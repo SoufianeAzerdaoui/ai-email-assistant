@@ -25,7 +25,10 @@ class AiClassificationWorkflowTests(unittest.TestCase):
         webhook = self.nodes["Recevoir classification"]
         self.assertEqual(webhook["parameters"]["path"], "classification")
         self.assertEqual(webhook["parameters"]["authentication"], "headerAuth")
-        self.assertEqual(webhook["parameters"]["responseMode"], "onReceived")
+        # n8n 2.43.6 omits responseMode when the default onReceived mode is used.
+        self.assertEqual(
+            webhook["parameters"].get("responseMode", "onReceived"), "onReceived"
+        )
         self.assertIn("Mailflow - Entrée n8n", webhook["notes"])
         self.assertIn("Déclenchement manuel", self.nodes)
         self.assertEqual(

@@ -639,9 +639,13 @@ class GmailSyncBatchHttpIntegrationSetupTests(unittest.TestCase):
 
     def test_compose_uses_dedicated_ports_volumes_and_internal_network(self):
         compose = HTTP_COMPOSE_PATH.read_text(encoding="utf-8")
-        self.assertIn('"127.0.0.1:55432:5432"', compose)
-        self.assertIn('"127.0.0.1:18000:8000"', compose)
-        self.assertIn('"127.0.0.1:15679:5678"', compose)
+        for target, published in ((5432, 55432), (8000, 18000), (5678, 15679)):
+            with self.subTest(port=published):
+                self.assertIn(
+                    f'target: {target}\n        published: "{published}"\n'
+                    "        host_ip: 127.0.0.1",
+                    compose,
+                )
         self.assertIn("mailflow_gmail_batch_test", compose)
         self.assertIn("gmail_batch_postgres_data", compose)
         self.assertIn("gmail_batch_n8n_data", compose)

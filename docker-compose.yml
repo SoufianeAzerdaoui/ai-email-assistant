@@ -1,6 +1,20 @@
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
 services:
   postgres:
     image: postgres:17-alpine
+    command:
+      - postgres
+      - -c
+      - log_error_verbosity=terse
+      - -c
+      - log_statement=none
+      - -c
+      - log_min_duration_statement=-1
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-email_assistant}
       POSTGRES_USER: ${POSTGRES_USER:-email_assistant}
@@ -9,12 +23,15 @@ services:
       - "127.0.0.1:${POSTGRES_PORT:-5432}:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
+    networks:
+      - mailflow_database
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U \"$$POSTGRES_USER\" -d \"$$POSTGRES_DB\""]
       interval: 5s
       timeout: 5s
       retries: 10
     restart: unless-stopped
+    logging: *default-logging
 
   backend:
     build:
@@ -28,6 +45,9 @@ services:
       N8N_GMAIL_SEND_WEBHOOK_URL: http://n8n:5678/webhook/gmail-send
     ports:
       - "127.0.0.1:${BACKEND_PORT:-8000}:8000"
+    networks:
+      - mailflow_app
+      - mailflow_database
     depends_on:
       postgres:
         condition: service_healthy
@@ -44,9 +64,10 @@ services:
       retries: 10
       start_period: 20s
     restart: unless-stopped
+    logging: *default-logging
 
   n8n:
-    image: ${N8N_IMAGE:-docker.n8n.io/n8nio/n8n:2.43.6}
+    image: docker.n8n.io/n8nio/n8n:2.43.6
     init: true
     environment:
       N8N_HOST: localhost
@@ -60,6 +81,18 @@ services:
       N8N_PERSONALIZATION_ENABLED: "false"
       N8N_VERSION_NOTIFICATIONS_ENABLED: "false"
       N8N_RUNNERS_ENABLED: "true"
+      EXECUTIONS_DATA_PRUNE: "true"
+      EXECUTIONS_DATA_MAX_AGE: ${EXECUTIONS_DATA_MAX_AGE:-72}
+      EXECUTIONS_DATA_PRUNE_MAX_COUNT: ${EXECUTIONS_DATA_PRUNE_MAX_COUNT:-500}
+      EXECUTIONS_DATA_SAVE_ON_ERROR: all
+      EXECUTIONS_DATA_SAVE_ON_SUCCESS: none
+      EXECUTIONS_DATA_SAVE_ON_PROGRESS: "false"
+      EXECUTIONS_DATA_SAVE_MANUAL_EXECUTIONS: "false"
+      N8N_EVENTBUS_LOGWRITER_KEEPLOGCOUNT: ${N8N_EVENTBUS_LOGWRITER_KEEPLOGCOUNT:-1}
+      N8N_EVENTBUS_LOGWRITER_MAXFILESIZEINKB: ${N8N_EVENTBUS_LOGWRITER_MAXFILESIZEINKB:-1024}
+      N8N_LOG_LEVEL: warn
+      N8N_LOG_OUTPUT: console
+      N8N_LOG_FORMAT: text
       GENERIC_TIMEZONE: ${GENERIC_TIMEZONE:-Europe/Paris}
       TZ: ${GENERIC_TIMEZONE:-Europe/Paris}
       BACKEND_URL: ${N8N_BACKEND_URL:-http://backend:8000}
@@ -74,6 +107,8 @@ services:
         condition: service_healthy
     volumes:
       - n8n_data:/home/node/.n8n
+    networks:
+      - mailflow_app
     healthcheck:
       test:
         - CMD-SHELL
@@ -85,6 +120,7 @@ services:
       retries: 12
       start_period: 30s
     restart: unless-stopped
+    logging: *default-logging
 
   frontend:
     build:
@@ -96,6 +132,8 @@ services:
       NEXT_TELEMETRY_DISABLED: "1"
     ports:
       - "127.0.0.1:${FRONTEND_PORT:-3000}:3000"
+    networks:
+      - mailflow_app
     depends_on:
       backend:
         condition: service_healthy
@@ -112,7 +150,13 @@ services:
       retries: 10
       start_period: 20s
     restart: unless-stopped
+    logging: *default-logging
 
 volumes:
   postgres_data:
   n8n_data:
+
+networks:
+  mailflow_app:
+  mailflow_database:
+    internal: true

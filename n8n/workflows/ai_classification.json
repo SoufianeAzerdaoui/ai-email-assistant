@@ -3,26 +3,30 @@
   "nodes": [
     {
       "parameters": {},
-      "id": "manual-trigger",
+      "id": "9a2ffee4-0149-4d3a-8079-099cc1d9e227",
       "name": "Déclenchement manuel",
       "type": "n8n-nodes-base.manualTrigger",
       "typeVersion": 1,
-      "position": [-1040, 120]
+      "position": [
+        224,
+        -112
+      ]
     },
     {
       "parameters": {
         "httpMethod": "POST",
         "path": "classification",
         "authentication": "headerAuth",
-        "responseMode": "onReceived",
         "options": {}
       },
-      "id": "classification-webhook",
+      "id": "137927dc-9802-484b-bf02-071a4fb655d7",
       "name": "Recevoir classification",
       "type": "n8n-nodes-base.webhook",
       "typeVersion": 2.2,
-      "position": [-1040, 280],
-      "webhookId": "mailflow-classification",
+      "position": [
+        224,
+        48
+      ],
       "notesInFlow": true,
       "notes": "Credential requis : \"Mailflow - Entrée n8n\", Header Auth X-Webhook-Secret = N8N_WEBHOOK_SECRET. Utiliser uniquement l'URL de production /webhook/classification."
     },
@@ -58,11 +62,14 @@
         },
         "options": {}
       },
-      "id": "classification-input",
+      "id": "04e8248f-e0b1-4aec-86f9-3aeae6cd6dfc",
       "name": "Entrée classification",
       "type": "n8n-nodes-base.set",
       "typeVersion": 3.4,
-      "position": [-816, 120],
+      "position": [
+        448,
+        -112
+      ],
       "notesInFlow": true,
       "notes": "Pour un test manuel, renseigner ou épingler user_id, email_id, subject et body. Aucun identifiant fictif n'est inclus."
     },
@@ -70,11 +77,14 @@
       "parameters": {
         "jsCode": "const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;\n\nreturn $input.all().map((item) => {\n  const input = item.json;\n  if (!uuid.test(String(input.user_id ?? '')) || !uuid.test(String(input.email_id ?? ''))) {\n    throw new Error('user_id et email_id doivent être des UUID valides.');\n  }\n  if (typeof input.subject !== 'string' || typeof input.body !== 'string') {\n    throw new Error('subject et body doivent être des chaînes de caractères.');\n  }\n  return { json: input };\n});"
       },
-      "id": "validate-input",
+      "id": "b1249dad-c7fd-429a-9084-3768835733e4",
       "name": "Valider entrée",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [-592, 120]
+      "position": [
+        672,
+        -112
+      ]
     },
     {
       "parameters": {
@@ -83,38 +93,43 @@
         "messages": {
           "messageValues": [
             {
-              "type": "SystemMessagePromptTemplate",
               "message": "Tu classes des e-mails professionnels en français. Réponds uniquement avec un objet JSON brut, sans Markdown, sans commentaire et sans clé supplémentaire. Le JSON doit contenir exactement : category, priority, summary, expected_action. category doit être exactement l'une des valeurs suivantes : client, facture, rendez-vous, newsletter, spam probable, autre. priority doit être un entier entre 1 et 3. summary doit être une phrase non vide de 1000 caractères maximum. expected_action doit être une chaîne non vide de 2000 caractères maximum."
             }
           ]
         },
         "batching": {}
       },
-      "id": "gemini-classification",
+      "id": "737538c1-afaf-428d-a347-7486f3f58310",
       "name": "Classification Gemini",
       "type": "@n8n/n8n-nodes-langchain.chainLlm",
       "typeVersion": 1.9,
-      "position": [-352, 120],
+      "position": [
+        912,
+        -112
+      ],
       "retryOnFail": true,
       "maxTries": 2,
       "waitBetweenTries": 5000,
-      "continueOnFail": true,
       "notesInFlow": true,
+      "continueOnFail": true,
       "notes": "Une erreur temporaire, notamment 429, 503 ou timeout, est retentée une fois après 5 secondes puis transmise à la tentative de correction."
     },
     {
       "parameters": {
-        "modelName": "models/gemini-2.5-flash",
+        "modelName": "models/gemini-3.5-flash",
         "options": {
           "maxOutputTokens": 1024,
           "temperature": 0.1
         }
       },
-      "id": "gemini-model",
+      "id": "9b271a41-69ab-49b7-8ef9-14a8be3d5c64",
       "name": "Google Gemini Chat Model",
       "type": "@n8n/n8n-nodes-langchain.lmChatGoogleGemini",
       "typeVersion": 1.2,
-      "position": [32, 536],
+      "position": [
+        1296,
+        304
+      ],
       "notesInFlow": true,
       "notes": "Après import, sélectionner ici le credential Google Gemini déjà configuré dans n8n."
     },
@@ -122,11 +137,14 @@
       "parameters": {
         "jsCode": "const allowedCategories = new Set(['client', 'facture', 'rendez-vous', 'newsletter', 'spam probable', 'autre']);\nconst requiredKeys = ['category', 'expected_action', 'priority', 'summary'];\n\nfunction validate(raw) {\n  try {\n    if (typeof raw !== 'string') return null;\n    const parsed = JSON.parse(raw.trim());\n    if (!parsed || Array.isArray(parsed) || typeof parsed !== 'object') return null;\n    const keys = Object.keys(parsed).sort();\n    if (JSON.stringify(keys) !== JSON.stringify(requiredKeys)) return null;\n    if (!allowedCategories.has(parsed.category)) return null;\n    if (!Number.isInteger(parsed.priority) || parsed.priority < 1 || parsed.priority > 3) return null;\n    if (typeof parsed.summary !== 'string' || !parsed.summary.trim() || parsed.summary.trim().length > 1000) return null;\n    if (typeof parsed.expected_action !== 'string' || !parsed.expected_action.trim() || parsed.expected_action.trim().length > 2000) return null;\n    return {\n      category: parsed.category,\n      priority: parsed.priority,\n      summary: parsed.summary.trim(),\n      expected_action: parsed.expected_action.trim(),\n      needs_review: false,\n    };\n  } catch {\n    return null;\n  }\n}\n\nreturn $input.all().map((item) => {\n  const classification = validate(item.json.text);\n  return { json: { valid: classification !== null, classification, raw: item.json.text ?? '' } };\n});"
       },
-      "id": "validate-first-json",
+      "id": "7abc57a0-c4cd-43a7-b30c-d78c0081707d",
       "name": "Valider JSON initial",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [-96, 120]
+      "position": [
+        1168,
+        -112
+      ]
     },
     {
       "parameters": {
@@ -153,11 +171,14 @@
         },
         "options": {}
       },
-      "id": "if-first-valid",
+      "id": "d0e2e366-005b-4e4f-93c3-63abfbabd470",
       "name": "JSON initial valide ?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.2,
-      "position": [144, 120]
+      "position": [
+        1408,
+        -112
+      ]
     },
     {
       "parameters": {
@@ -166,34 +187,39 @@
         "messages": {
           "messageValues": [
             {
-              "type": "SystemMessagePromptTemplate",
               "message": "Ceci est l'unique tentative de correction. Réponds uniquement avec un objet JSON brut, sans Markdown, sans commentaire et sans clé supplémentaire. Il doit contenir exactement category, priority, summary, expected_action. category : client, facture, rendez-vous, newsletter, spam probable ou autre. priority : entier de 1 à 3. summary : phrase non vide de 1000 caractères maximum. expected_action : chaîne non vide de 2000 caractères maximum."
             }
           ]
         },
         "batching": {}
       },
-      "id": "gemini-retry",
+      "id": "faec04b5-aadc-4b54-bcda-fb171b1a1ac8",
       "name": "Nouvelle tentative Gemini",
       "type": "@n8n/n8n-nodes-langchain.chainLlm",
       "typeVersion": 1.9,
-      "position": [384, 248],
+      "position": [
+        1648,
+        16
+      ],
       "retryOnFail": true,
       "maxTries": 2,
       "waitBetweenTries": 10000,
-      "continueOnFail": true,
       "notesInFlow": true,
+      "continueOnFail": true,
       "notes": "Une seule correction logique est effectuée. Une erreur temporaire est retentée une fois après 10 secondes, formant un backoff borné 5 s puis 10 s."
     },
     {
       "parameters": {
         "jsCode": "const allowedCategories = new Set(['client', 'facture', 'rendez-vous', 'newsletter', 'spam probable', 'autre']);\nconst requiredKeys = ['category', 'expected_action', 'priority', 'summary'];\n\nfunction validate(raw) {\n  try {\n    if (typeof raw !== 'string') return null;\n    const parsed = JSON.parse(raw.trim());\n    if (!parsed || Array.isArray(parsed) || typeof parsed !== 'object') return null;\n    const keys = Object.keys(parsed).sort();\n    if (JSON.stringify(keys) !== JSON.stringify(requiredKeys)) return null;\n    if (!allowedCategories.has(parsed.category)) return null;\n    if (!Number.isInteger(parsed.priority) || parsed.priority < 1 || parsed.priority > 3) return null;\n    if (typeof parsed.summary !== 'string' || !parsed.summary.trim() || parsed.summary.trim().length > 1000) return null;\n    if (typeof parsed.expected_action !== 'string' || !parsed.expected_action.trim() || parsed.expected_action.trim().length > 2000) return null;\n    return {\n      category: parsed.category,\n      priority: parsed.priority,\n      summary: parsed.summary.trim(),\n      expected_action: parsed.expected_action.trim(),\n      needs_review: false,\n    };\n  } catch {\n    return null;\n  }\n}\n\nreturn $input.all().map((item) => {\n  const classification = validate(item.json.text);\n  return { json: { valid: classification !== null, classification } };\n});"
       },
-      "id": "validate-retry-json",
+      "id": "4c7c04e6-8a4e-483d-8c85-4864341d0581",
       "name": "Valider JSON nouvelle tentative",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [640, 248]
+      "position": [
+        1904,
+        16
+      ]
     },
     {
       "parameters": {
@@ -220,21 +246,27 @@
         },
         "options": {}
       },
-      "id": "if-retry-valid",
+      "id": "18a86823-efcd-4809-b6da-b0be9dfe5a09",
       "name": "Nouveau JSON valide ?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.2,
-      "position": [880, 248]
+      "position": [
+        2144,
+        16
+      ]
     },
     {
       "parameters": {
         "jsCode": "let geminiUnavailable = false;\ntry {\n  geminiUnavailable = Boolean(\n    $('Classification Gemini').item.json.error ||\n    $('Nouvelle tentative Gemini').item.json.error\n  );\n} catch {}\nreturn $input.all().map(() => ({\n  json: {\n    classification: {\n      category: 'autre',\n      priority: 2,\n      summary: 'Classification automatique indisponible ; vérification manuelle requise.',\n      expected_action: 'Vérifier manuellement la catégorie, la priorité et l’action attendue.',\n      needs_review: true,\n    },\n    error_type: geminiUnavailable ? 'gemini_unavailable' : 'invalid_gemini_output',\n  },\n}));"
       },
-      "id": "classification-fallback",
+      "id": "98f53a00-93d5-413c-bff6-88f898075350",
       "name": "Fallback à vérifier",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [1120, 376]
+      "position": [
+        2384,
+        144
+      ]
     },
     {
       "parameters": {
@@ -243,42 +275,60 @@
         "authentication": "genericCredentialType",
         "genericAuthType": "httpHeaderAuth",
         "sendBody": true,
-        "contentType": "json",
         "specifyBody": "json",
         "jsonBody": "={{ { user_id: $('Entrée classification').item.json.user_id, email_id: $('Entrée classification').item.json.email_id, category: $json.classification.category, priority: $json.classification.priority, summary: $json.classification.summary, expected_action: $json.classification.expected_action, needs_review: $json.classification.needs_review } }}",
-        "options": {"timeout": 30000}
+        "options": {
+          "timeout": 30000
+        }
       },
-      "id": "post-classification",
+      "id": "895dae21-5197-4705-896d-032761ccafc7",
       "name": "Enregistrer classification",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [1360, 120],
+      "position": [
+        2624,
+        -112
+      ],
       "retryOnFail": true,
       "maxTries": 3,
       "waitBetweenTries": 5000,
-      "continueOnFail": true,
       "notesInFlow": true,
+      "continueOnFail": true,
       "notes": "Credential requis : \"Mailflow - Vers FastAPI\", Header Auth X-Webhook-Secret = WEBHOOK_SECRET. Trois tentatives maximum ; l'échec final est journalisé sans relancer Gemini ni Gmail Sync."
     },
     {
       "parameters": {
         "conditions": {
-          "options": {"caseSensitive": true, "leftValue": "", "typeValidation": "strict", "version": 2},
-          "conditions": [{
-            "id": "classification-callback-ok",
-            "leftValue": "={{ $json.error === undefined }}",
-            "rightValue": true,
-            "operator": {"type": "boolean", "operation": "true", "singleValue": true}
-          }],
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "classification-callback-ok",
+              "leftValue": "={{ $json.error === undefined }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
           "combinator": "and"
         },
         "options": {}
       },
-      "id": "classification-callback-ok",
+      "id": "34740579-d88d-4887-b6bb-54e0983a5d0b",
       "name": "Callback classification réussi ?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.2,
-      "position": [1584, 120]
+      "position": [
+        2848,
+        -112
+      ]
     },
     {
       "parameters": {
@@ -290,13 +340,18 @@
         "contentType": "raw",
         "rawContentType": "application/json",
         "body": "={{ JSON.stringify({ user_id: $('Entrée classification').item.json.user_id, email_id: $('Entrée classification').item.json.email_id, idempotency_key: `classification:${$('Entrée classification').item.json.email_id}:${$json.error_type ?? 'classification_callback_failed'}`, workflow_name: 'Mailflow - Classification IA', node_name: $json.error_type ? 'Fallback à vérifier' : 'Enregistrer classification', error_type: $json.error_type ?? 'classification_callback_failed', status_code: Number($json.statusCode ?? $json.error?.httpCode ?? 0) || null, attempt: $json.error_type ? 2 : 3 }) }}",
-        "options": {"timeout": 30000}
+        "options": {
+          "timeout": 30000
+        }
       },
-      "id": "log-classification-error",
+      "id": "11b8368a-203e-450a-a9ba-7becddf9f219",
       "name": "Journaliser erreur classification",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.3,
-      "position": [1584, 376],
+      "position": [
+        2848,
+        144
+      ],
       "retryOnFail": true,
       "maxTries": 2,
       "waitBetweenTries": 5000,
@@ -306,64 +361,193 @@
   ],
   "connections": {
     "Déclenchement manuel": {
-      "main": [[{"node": "Entrée classification", "type": "main", "index": 0}]]
+      "main": [
+        [
+          {
+            "node": "Entrée classification",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "Recevoir classification": {
-      "main": [[{"node": "Entrée classification", "type": "main", "index": 0}]]
+      "main": [
+        [
+          {
+            "node": "Entrée classification",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "Entrée classification": {
-      "main": [[{"node": "Valider entrée", "type": "main", "index": 0}]]
+      "main": [
+        [
+          {
+            "node": "Valider entrée",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "Valider entrée": {
-      "main": [[{"node": "Classification Gemini", "type": "main", "index": 0}]]
+      "main": [
+        [
+          {
+            "node": "Classification Gemini",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "Google Gemini Chat Model": {
-      "ai_languageModel": [[
-        {"node": "Classification Gemini", "type": "ai_languageModel", "index": 0},
-        {"node": "Nouvelle tentative Gemini", "type": "ai_languageModel", "index": 0}
-      ]]
+      "ai_languageModel": [
+        [
+          {
+            "node": "Classification Gemini",
+            "type": "ai_languageModel",
+            "index": 0
+          },
+          {
+            "node": "Nouvelle tentative Gemini",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
     },
     "Classification Gemini": {
-      "main": [[{"node": "Valider JSON initial", "type": "main", "index": 0}]]
+      "main": [
+        [
+          {
+            "node": "Valider JSON initial",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "Valider JSON initial": {
-      "main": [[{"node": "JSON initial valide ?", "type": "main", "index": 0}]]
+      "main": [
+        [
+          {
+            "node": "JSON initial valide ?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "JSON initial valide ?": {
       "main": [
-        [{"node": "Enregistrer classification", "type": "main", "index": 0}],
-        [{"node": "Nouvelle tentative Gemini", "type": "main", "index": 0}]
+        [
+          {
+            "node": "Enregistrer classification",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Nouvelle tentative Gemini",
+            "type": "main",
+            "index": 0
+          }
+        ]
       ]
     },
     "Nouvelle tentative Gemini": {
-      "main": [[{"node": "Valider JSON nouvelle tentative", "type": "main", "index": 0}]]
+      "main": [
+        [
+          {
+            "node": "Valider JSON nouvelle tentative",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "Valider JSON nouvelle tentative": {
-      "main": [[{"node": "Nouveau JSON valide ?", "type": "main", "index": 0}]]
+      "main": [
+        [
+          {
+            "node": "Nouveau JSON valide ?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "Nouveau JSON valide ?": {
       "main": [
-        [{"node": "Enregistrer classification", "type": "main", "index": 0}],
-        [{"node": "Fallback à vérifier", "type": "main", "index": 0}]
+        [
+          {
+            "node": "Enregistrer classification",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Fallback à vérifier",
+            "type": "main",
+            "index": 0
+          }
+        ]
       ]
     },
     "Fallback à vérifier": {
-      "main": [[
-        {"node": "Enregistrer classification", "type": "main", "index": 0},
-        {"node": "Journaliser erreur classification", "type": "main", "index": 0}
-      ]]
+      "main": [
+        [
+          {
+            "node": "Enregistrer classification",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Journaliser erreur classification",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "Enregistrer classification": {
-      "main": [[{"node": "Callback classification réussi ?", "type": "main", "index": 0}]]
+      "main": [
+        [
+          {
+            "node": "Callback classification réussi ?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "Callback classification réussi ?": {
-      "main": [[], [{"node": "Journaliser erreur classification", "type": "main", "index": 0}]]
+      "main": [
+        [],
+        [
+          {
+            "node": "Journaliser erreur classification",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     }
   },
   "pinData": {},
   "active": false,
   "settings": {
-    "executionOrder": "v1"
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "timeSavedMode": "fixed",
+    "timezone": "Europe/Paris",
+    "saveManualExecutions": false
   },
   "tags": []
 }

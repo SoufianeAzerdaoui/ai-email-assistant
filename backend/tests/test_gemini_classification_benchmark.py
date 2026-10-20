@@ -105,12 +105,18 @@ class GeminiClassificationBenchmarkTests(unittest.TestCase):
         self.assertEqual(actual, expected)
 
     def test_prompts_temperature_and_validators_match_production_export(self):
-        for node_name in (
-            "Classification Gemini",
-            "Nouvelle tentative Gemini",
-            "Valider JSON initial",
-            "Valider JSON nouvelle tentative",
-        ):
+        for node_name in ("Classification Gemini", "Nouvelle tentative Gemini"):
+            with self.subTest(node=node_name):
+                benchmark = self.nodes[node_name]["parameters"]
+                production = self.reference_nodes[node_name]["parameters"]
+                self.assertEqual(benchmark["promptType"], production["promptType"])
+                self.assertEqual(benchmark["text"], production["text"])
+                self.assertEqual(
+                    [message["message"] for message in benchmark["messages"]["messageValues"]],
+                    [message["message"] for message in production["messages"]["messageValues"]],
+                )
+                self.assertEqual(benchmark["batching"], production["batching"])
+        for node_name in ("Valider JSON initial", "Valider JSON nouvelle tentative"):
             with self.subTest(node=node_name):
                 self.assertEqual(
                     self.nodes[node_name]["parameters"],

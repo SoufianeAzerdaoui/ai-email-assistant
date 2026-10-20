@@ -69,8 +69,11 @@ class GmailSendWorkflowTests(unittest.TestCase):
         response_options = gmail["parameters"]["options"]["response"]["response"]
         self.assertEqual(response_options["responseFormat"], "json")
         self.assertTrue(response_options["fullResponse"])
-        self.assertEqual(gmail["parameters"]["contentType"], "json")
+        # n8n 2.43.6 represents a JSON request with specifyBody/jsonBody and no
+        # longer needs the redundant contentType field in this export.
+        self.assertTrue(gmail["parameters"]["sendBody"])
         self.assertEqual(gmail["parameters"]["specifyBody"], "json")
+        self.assertIn("jsonBody", gmail["parameters"])
         self.assertNotIn("rawContentType", gmail["parameters"])
         self.assertNotIn("body", gmail["parameters"])
 
