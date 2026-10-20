@@ -2,6 +2,7 @@
 
 from datetime import date as Date, datetime, time, timedelta, timezone
 from typing import Annotated
+from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends
 from sqlalchemy import func, select
@@ -24,6 +25,14 @@ CATEGORY_LABELS = {
     "spam probable": "spam probable",
     "autre": "autre",
 }
+PARIS_TIMEZONE = ZoneInfo("Europe/Paris")
+
+
+def paris_day_bounds_utc(day: Date) -> tuple[datetime, datetime]:
+    """Return the UTC bounds of a calendar day in Europe/Paris."""
+    local_start = datetime.combine(day, time.min, tzinfo=PARIS_TIMEZONE)
+    local_end = datetime.combine(day + timedelta(days=1), time.min, tzinfo=PARIS_TIMEZONE)
+    return local_start.astimezone(timezone.utc), local_end.astimezone(timezone.utc)
 
 
 def priority_reason(email: Email) -> str:
@@ -57,8 +66,7 @@ def get_daily_summary(
     current_user: Annotated[User, Depends(get_current_user)],
     db: Annotated[Session, Depends(get_db)],
 ):
-    day_start = datetime.combine(date, time.min, tzinfo=timezone.utc)
-    day_end = day_start + timedelta(days=1)
+    day_start, day_end = paris_day_bounds_utc(date)
     conditions = (
         Email.user_id == current_user.id,
         Email.received_at >= day_start,

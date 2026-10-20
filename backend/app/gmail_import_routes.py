@@ -5,7 +5,7 @@ from typing import Annotated
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import select, update
+from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
@@ -27,6 +27,19 @@ from app.models import Email, SyncExecution, SyncState, Thread, User
 router = APIRouter(prefix="/internal/webhooks", tags=["internal"])
 
 SYNC_LEASE = timedelta(minutes=30)
+CLASSIFICATION_FIELDS = ("category", "priority", "summary", "expected_action")
+
+
+def classification_task_for(email: Email) -> dict | None:
+    """Return a task only when classification has never started for this email."""
+    if not all(getattr(email, field) is None for field in CLASSIFICATION_FIELDS):
+        return None
+    return {
+        "user_id": email.user_id,
+        "email_id": email.id,
+        "subject": email.subject,
+        "body": email.body_text,
+    }
 
 
 @router.post(
@@ -263,6 +276,18 @@ def import_gmail_messages(
                 "body": readable_body,
             })
         else:
+            existing_email = db.scalar(
+                select(Email)
+                .where(
+                    Email.user_id == payload.user_id,
+                    Email.gmail_message_id == message.gmail_message_id,
+                )
+                .with_for_update()
+            )
+            if existing_email is None:
+                db.rollback()
+                raise HTTPException(status_code=409, detail="Unable to resolve Gmail message")
+
             repair_candidates: set[str] = set()
             if message.body_text and readable_body != message.body_text:
                 repair_candidates.add(message.body_text)
@@ -272,18 +297,13 @@ def import_gmail_messages(
                     repair_candidates.add(message.body_html)
                 if readable_body != legacy_body:
                     repair_candidates.add(legacy_body)
-            if not repair_candidates:
-                continue
-            repair_result = db.execute(
-                update(Email)
-                .where(
-                    Email.user_id == payload.user_id,
-                    Email.gmail_message_id == message.gmail_message_id,
-                    Email.body_text.in_(repair_candidates),
-                )
-                .values(body_text=readable_body)
-            )
-            repaired_count += repair_result.rowcount
+            if existing_email.body_text in repair_candidates:
+                existing_email.body_text = readable_body
+                repaired_count += 1
+
+            classification_task = classification_task_for(existing_email)
+            if classification_task is not None:
+                classification_tasks.append(classification_task)
 
     db.commit()
     received_count = len(payload.messages)

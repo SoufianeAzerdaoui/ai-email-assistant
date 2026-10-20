@@ -1,0 +1,255 @@
+{
+  "name": "Mailflow - Gmail Sync Batch Manual Harness",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "manual-trigger",
+      "name": "Test manuel",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [0, 0]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// Choix: batch_15, batch_30, fail_second_batch, zero, test_15, zero_test\nconst selected = 'batch_15';\nconst scenarios = {\n  batch_15: { message_count: 15, fail_batch: null, test_mode: false },\n  batch_30: { message_count: 30, fail_batch: null, test_mode: false },\n  fail_second_batch: { message_count: 15, fail_batch: 2, test_mode: false },\n  zero: { message_count: 0, fail_batch: null, test_mode: false },\n  test_15: { message_count: 15, fail_batch: null, test_mode: true },\n  zero_test: { message_count: 0, fail_batch: null, test_mode: true },\n};\nconst scenario = scenarios[selected];\nif (!scenario) throw new Error(`Scénario inconnu: ${selected}`);\nreturn [{ json: {\n  scenario: selected,\n  ...scenario,\n  expected_batches: Math.ceil(scenario.message_count / 10),\n  _sync: {\n    user_id: '00000000-0000-4000-8000-000000000001',\n    execution_id: '00000000-0000-4000-8000-000000000002',\n    idempotency_key: `manual-harness:${selected}`,\n    cursor_before: 'cursor-before-fixture',\n    cursor_after: 'cursor-after-fixture',\n    mode: 'fixture',\n    test_mode: scenario.test_mode,\n    classify_in_test_mode: true,\n  },\n} }];"
+      },
+      "id": "configure-scenario",
+      "name": "Configurer scénario",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [224, 0],
+      "notesInFlow": true,
+      "notes": "Modifier uniquement la constante selected. Ce workflow n'effectue aucun appel réseau."
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const config = $json;\nif (config.message_count === 0) return [{ json: { _empty: true, _sync: config._sync, _scenario: config } }];\nreturn Array.from({ length: config.message_count }, (_, index) => ({ json: {\n  gmail_message_id: `fixture-message-${String(index + 1).padStart(3, '0')}`,\n  attempt: 0,\n  _sync: config._sync,\n  _scenario: config,\n} }));"
+      },
+      "id": "generate-gmail-ids",
+      "name": "Générer IDs Gmail fictifs",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [448, 0]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {"caseSensitive": true, "leftValue": "", "typeValidation": "strict", "version": 2},
+          "conditions": [{"id": "has-message", "leftValue": "={{ !$json._empty }}", "rightValue": true, "operator": {"type": "boolean", "operation": "true", "singleValue": true}}],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "messages-to-process",
+      "name": "Messages à traiter ?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [672, 0]
+    },
+    {
+      "parameters": {"batchSize": 10, "options": {}},
+      "id": "outer-loop",
+      "name": "Traiter un lot de messages",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [896, -96],
+      "notesInFlow": true,
+      "notes": "Boucle extérieure identique au candidat: lots de 10 maximum."
+    },
+    {
+      "parameters": {"batchSize": 1, "options": {"reset": "={{ Number.isInteger($json.attempt) }}"}},
+      "id": "detail-loop",
+      "name": "Traiter un détail Gmail à la fois",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [1120, 0],
+      "notesInFlow": true,
+      "notes": "Boucle intérieure identique au candidat. Reset uniquement à l'arrivée d'un nouveau lot extérieur."
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const item = $json;\nconst sequence = Number(item.gmail_message_id.split('-').at(-1));\nreturn [{ json: {\n  _sync: item._sync,\n  _scenario: item._scenario,\n  gmail_message_id: item.gmail_message_id,\n  gmail_thread_id: `fixture-thread-${String(Math.ceil(sequence / 3)).padStart(3, '0')}`,\n  message_id: `<${item.gmail_message_id}@mailflow.invalid>`,\n  sender: `expediteur${sequence}@example.test`,\n  recipients: ['mailflow-test@example.test'],\n  subject: `Message Gmail fictif ${sequence}`,\n  body_text: `Contenu fictif du message ${sequence}.`,\n  body_html: null,\n  received_at: new Date(Date.UTC(2026, 0, 1, 8, sequence)).toISOString(),\n} }];"
+      },
+      "id": "simulate-gmail-detail",
+      "name": "Simuler réponse Gmail",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1344, 96],
+      "notesInFlow": true,
+      "notes": "Produit uniquement des messages fictifs; aucun appel Gmail."
+    },
+    {
+      "parameters": {"resume": "timeInterval", "amount": 0.01, "unit": "seconds"},
+      "id": "short-gmail-wait",
+      "name": "Pause Gmail simulée",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [1568, 96],
+      "notesInFlow": true,
+      "notes": "Pause réduite pour le harnais. Le candidat conserve 2,5 secondes."
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const items = $input.all();\nconst sync = items[0]?.json?._sync;\nconst scenario = items[0]?.json?._scenario;\nif (!sync || !scenario) throw new Error('Contexte de test absent.');\nif (items.length > 10) throw new Error(`Lot trop grand: ${items.length}`);\nconst messages = items.map(({ json: value }) => ({\n  gmail_message_id: value.gmail_message_id, gmail_thread_id: value.gmail_thread_id,\n  message_id: value.message_id, sender: value.sender, recipients: value.recipients,\n  subject: value.subject, body_text: value.body_text, body_html: value.body_html, received_at: value.received_at,\n}));\nconst sequence = Number(messages[0].gmail_message_id.split('-').at(-1));\nreturn [{ json: { _sync: sync, _scenario: scenario, batch_number: Math.floor((sequence - 1) / 10) + 1, messages } }];"
+      },
+      "id": "prepare-import-batch",
+      "name": "Préparer lot import",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1344, -128]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const batch = $json;\nif (batch._scenario.fail_batch === batch.batch_number) {\n  throw new Error(`Échec FastAPI simulé au lot ${batch.batch_number}; aucun commit ne doit apparaître.`);\n}\nconst tasks = batch.messages.map((message, index) => ({\n  user_id: batch._sync.user_id,\n  email_id: `00000000-0000-4000-8${String(batch.batch_number).padStart(3, '0')}-${String(index + 1).padStart(12, '0')}`,\n  subject: message.subject,\n  body: message.body_text,\n}));\nreturn [{ json: {\n  _sync: batch._sync, _scenario: batch._scenario, batch_number: batch.batch_number,\n  received_count: batch.messages.length, imported_count: batch.messages.length, duplicate_count: 0,\n  repaired_count: 0, created_thread_count: 0, classification_tasks: tasks,\n} }];"
+      },
+      "id": "simulate-fastapi-import",
+      "name": "Simuler import FastAPI",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1568, -128],
+      "notesInFlow": true,
+      "notes": "Le scénario fail_second_batch lève une erreur avant toute sortie du deuxième lot."
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const batch = $json;\nif (batch.received_count < 1 || batch.received_count > 10) throw new Error('received_count invalide.');\nif (batch.classification_tasks.length !== batch.received_count) throw new Error('Nombre de classifications incohérent.');\nreturn batch.classification_tasks.map((task) => ({ json: {\n  _sync: batch._sync, _scenario: batch._scenario, classification_task: task,\n  _batch: { _sync: batch._sync, _scenario: batch._scenario, batch_number: batch.batch_number, imported_count: batch.imported_count, expected_classifications: batch.classification_tasks.length },\n} }));"
+      },
+      "id": "expand-classifications",
+      "name": "Développer classifications",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1792, -128]
+    },
+    {
+      "parameters": {"batchSize": 1, "options": {"reset": "={{ $json.classification_dispatch_failed === undefined }}"}},
+      "id": "classification-loop",
+      "name": "Traiter une classification à la fois",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [2016, -128],
+      "notesInFlow": true,
+      "notes": "Deuxième boucle intérieure identique au candidat."
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "return [{ json: { ...$json, classification_dispatch_failed: false, classification_status_code: 202 } }];"
+      },
+      "id": "simulate-classification",
+      "name": "Simuler classification acceptée",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2240, -32]
+    },
+    {
+      "parameters": {"resume": "timeInterval", "amount": 0.01, "unit": "seconds"},
+      "id": "short-classification-wait",
+      "name": "Pause classification simulée",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [2464, -32]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const items = $input.all();\nconst batch = items[0]?.json?._batch;\nif (!batch) throw new Error('Contexte du lot absent.');\nif (items.length !== batch.expected_classifications) throw new Error(`Classifications perdues: ${items.length}/${batch.expected_classifications}`);\nreturn [{ json: {\n  _sync: batch._sync, _scenario: batch._scenario, batch_number: batch.batch_number,\n  imported_count: batch.imported_count, classification_count: items.length, batch_size: batch.imported_count,\n} }];"
+      },
+      "id": "finish-batch",
+      "name": "Terminer lot",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2240, -224]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const items = $input.all();\nconst first = items[0]?.json;\nif (!first) throw new Error('Aucun résultat de lot.');\nconst scenario = first._scenario;\nconst sizes = items.map((item) => item.json.batch_size);\nconst imported = items.reduce((sum, item) => sum + item.json.imported_count, 0);\nconst classifications = items.reduce((sum, item) => sum + item.json.classification_count, 0);\nif (items.length !== scenario.expected_batches) throw new Error(`Lots: ${items.length}/${scenario.expected_batches}`);\nif (imported !== scenario.message_count) throw new Error(`Imports: ${imported}/${scenario.message_count}`);\nif (classifications !== scenario.message_count) throw new Error(`Classifications: ${classifications}/${scenario.message_count}`);\nreturn [{ json: { _sync: first._sync, scenario: scenario.scenario, batch_sizes: sizes, batch_count: items.length, imported_count: imported, classification_count: classifications } }];"
+      },
+      "id": "aggregate-results",
+      "name": "Vérifier résultats des lots",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1120, -320]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const item = $json;\nreturn [{ json: { _sync: item._sync, scenario: item._scenario.scenario, batch_sizes: [], batch_count: 0, imported_count: 0, classification_count: 0 } }];"
+      },
+      "id": "zero-results",
+      "name": "Préparer résultat zéro message",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [896, 192]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {"caseSensitive": true, "leftValue": "", "typeValidation": "strict", "version": 2},
+          "conditions": [{"id": "commit-allowed", "leftValue": "={{ $json._sync.test_mode !== true }}", "rightValue": true, "operator": {"type": "boolean", "operation": "true", "singleValue": true}}],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "commit-gate",
+      "name": "Commit curseur autorisé ?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [1344, -320]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "return [{ json: { ...$json, commit_called: true, cursor_committed: $json._sync.cursor_after } }];"
+      },
+      "id": "simulate-commit",
+      "name": "Simuler commit curseur",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1568, -384],
+      "notesInFlow": true,
+      "notes": "Simple marqueur local. Aucun appel au backend."
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "return [{ json: { ...$json, commit_called: false, cursor_committed: null } }];"
+      },
+      "id": "no-commit-report",
+      "name": "Confirmer absence de commit",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1568, -256]
+    }
+  ],
+  "connections": {
+    "Test manuel": {"main": [[{"node": "Configurer scénario", "type": "main", "index": 0}]]},
+    "Configurer scénario": {"main": [[{"node": "Générer IDs Gmail fictifs", "type": "main", "index": 0}]]},
+    "Générer IDs Gmail fictifs": {"main": [[{"node": "Messages à traiter ?", "type": "main", "index": 0}]]},
+    "Messages à traiter ?": {"main": [[{"node": "Traiter un lot de messages", "type": "main", "index": 0}], [{"node": "Préparer résultat zéro message", "type": "main", "index": 0}]]},
+    "Traiter un lot de messages": {"main": [[{"node": "Vérifier résultats des lots", "type": "main", "index": 0}], [{"node": "Traiter un détail Gmail à la fois", "type": "main", "index": 0}]]},
+    "Traiter un détail Gmail à la fois": {"main": [[{"node": "Préparer lot import", "type": "main", "index": 0}], [{"node": "Simuler réponse Gmail", "type": "main", "index": 0}]]},
+    "Simuler réponse Gmail": {"main": [[{"node": "Pause Gmail simulée", "type": "main", "index": 0}]]},
+    "Pause Gmail simulée": {"main": [[{"node": "Traiter un détail Gmail à la fois", "type": "main", "index": 0}]]},
+    "Préparer lot import": {"main": [[{"node": "Simuler import FastAPI", "type": "main", "index": 0}]]},
+    "Simuler import FastAPI": {"main": [[{"node": "Développer classifications", "type": "main", "index": 0}]]},
+    "Développer classifications": {"main": [[{"node": "Traiter une classification à la fois", "type": "main", "index": 0}]]},
+    "Traiter une classification à la fois": {"main": [[{"node": "Terminer lot", "type": "main", "index": 0}], [{"node": "Simuler classification acceptée", "type": "main", "index": 0}]]},
+    "Simuler classification acceptée": {"main": [[{"node": "Pause classification simulée", "type": "main", "index": 0}]]},
+    "Pause classification simulée": {"main": [[{"node": "Traiter une classification à la fois", "type": "main", "index": 0}]]},
+    "Terminer lot": {"main": [[{"node": "Traiter un lot de messages", "type": "main", "index": 0}]]},
+    "Vérifier résultats des lots": {"main": [[{"node": "Commit curseur autorisé ?", "type": "main", "index": 0}]]},
+    "Préparer résultat zéro message": {"main": [[{"node": "Commit curseur autorisé ?", "type": "main", "index": 0}]]},
+    "Commit curseur autorisé ?": {"main": [[{"node": "Simuler commit curseur", "type": "main", "index": 0}], [{"node": "Confirmer absence de commit", "type": "main", "index": 0}]]}
+  },
+  "pinData": {},
+  "active": false,
+  "settings": {"executionOrder": "v1", "saveManualExecutions": true},
+  "tags": []
+}
