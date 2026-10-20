@@ -1,0 +1,612 @@
+{
+  "name": "Mailflow - Benchmark réel Gemini (isolé)",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "manual-trigger",
+      "name": "Déclenchement manuel uniquement",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        -1200,
+        0
+      ],
+      "notesInFlow": true,
+      "notes": "Aucun Schedule Trigger ni webhook. Une exécution nécessite une action humaine."
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// Étape 1 : laisser 'single' pour l'essai isolé. Étapes suivantes : choisir 'batch'.\nconst benchmarkMode = 'single';\nconst batchSize = 10; // entier de 1 à 10 en mode 'batch'\n\n// Pour reprendre un autre jour, remplacer cet objet par le contenu du dernier\n// fichier gemini-benchmark-checkpoint-XX.json téléchargé depuis ce workflow.\nconst checkpoint = {\n  version: 1,\n  dataset_id: 'seed-demo-v1',\n  model: 'models/gemini-3.5-flash',\n  results: [],\n  groups: [],\n};\n\nif (!['single', 'batch'].includes(benchmarkMode)) throw new Error('Mode benchmark invalide.');\nif (!Number.isInteger(batchSize) || batchSize < 1 || batchSize > 10) throw new Error('batchSize doit être compris entre 1 et 10.');\nif (checkpoint.version !== 1 || checkpoint.dataset_id !== 'seed-demo-v1') throw new Error('Checkpoint incompatible.');\nif (checkpoint.model !== 'models/gemini-3.5-flash') throw new Error('Le modèle du checkpoint ne correspond pas.');\nif (!Array.isArray(checkpoint.results) || !Array.isArray(checkpoint.groups)) throw new Error('Checkpoint incomplet.');\nif (checkpoint.results.length > 30) throw new Error('Checkpoint supérieur à 30 résultats.');\nconst ids = checkpoint.results.map((result) => result.fixture_id);\nif (ids.some((id) => typeof id !== 'string') || new Set(ids).size !== ids.length) throw new Error('Checkpoint avec identifiants invalides ou dupliqués.');\n\nconst messageLimit = benchmarkMode === 'single' ? 1 : batchSize;\nreturn [{ json: {\n  benchmark_mode: benchmarkMode,\n  message_limit: messageLimit,\n  dataset_size: 30,\n  pause_seconds: 5,\n  logical_call_limit: messageLimit * 2,\n  transport_attempt_limit: messageLimit * 4,\n  benchmark_started_ms: Date.now(),\n  checkpoint_results: benchmarkMode === 'batch' ? checkpoint.results : [],\n  checkpoint_groups: benchmarkMode === 'batch' ? checkpoint.groups : [],\n} }];"
+      },
+      "id": "configure-benchmark",
+      "name": "Configurer benchmark",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -976,
+        0
+      ],
+      "notesInFlow": true,
+      "notes": "Mode single par défaut. Passer explicitement à full seulement après validation du premier message."
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const config = $json;\nconst threads = [{\"subject\": \"Renouvellement du contrat de maintenance\", \"category\": \"client\", \"priority\": 3, \"senders\": [\"claire@atelier-lumiere.fr\", \"juridique@atelier-lumiere.fr\"], \"bodies\": [\"Bonjour, notre contrat arrive à échéance. Pouvez-vous nous envoyer une proposition actualisée ?\", \"Merci pour votre retour. Nous souhaitons conserver le même périmètre avec une assistance prioritaire.\", \"Notre service juridique a ajouté deux remarques sur les délais d’intervention.\", \"La direction valide le budget proposé. Pouvez-vous préparer la version à signer ?\", \"Le contrat signé est joint à ce message. Merci de confirmer sa bonne réception.\"]}, {\"subject\": \"Facture hébergement – septembre\", \"category\": \"facture\", \"priority\": 2, \"senders\": [\"facturation@cloudhexagone.fr\", \"compta@cloudhexagone.fr\"], \"bodies\": [\"Bonjour, vous trouverez votre facture mensuelle d’hébergement en pièce jointe.\", \"Nous constatons que le règlement n’apparaît pas encore sur votre compte client.\", \"Pouvez-vous nous transmettre la référence du virement afin de faire le rapprochement ?\", \"Le paiement a bien été identifié. Votre compte est maintenant à jour.\", \"Merci de conserver ce message comme confirmation de règlement.\"]}, {\"subject\": \"Organisation de la démonstration produit\", \"category\": \"rendez-vous\", \"priority\": 3, \"senders\": [\"sophie.martin@novacorp.fr\", \"thomas@novacorp.fr\"], \"bodies\": [\"Bonjour, seriez-vous disponible mardi prochain pour une démonstration à notre équipe ?\", \"Le créneau de 10 h convient à six participants. La réunion peut se tenir en visioconférence.\", \"Pourriez-vous prévoir un exemple autour du suivi des demandes clients ?\", \"Voici le lien de connexion et la liste définitive des participants.\", \"Merci pour la démonstration. Nous aimerions planifier un atelier technique complémentaire.\"]}, {\"subject\": \"La lettre numérique de la semaine\", \"category\": \"newsletter\", \"priority\": 1, \"senders\": [\"newsletter@frenchtech.example\", \"evenements@frenchtech.example\"], \"bodies\": [\"Cette semaine : financement, cybersécurité et nouveaux outils pour les équipes produit.\", \"Découvrez notre entretien avec trois entrepreneuses qui développent leur activité en Europe.\", \"Les inscriptions pour la rencontre mensuelle sont ouvertes jusqu’à vendredi.\", \"Notre sélection présente cinq ressources pratiques pour mieux mesurer la satisfaction client.\", \"Retrouvez les événements et appels à projets du mois prochain dans notre agenda.\"]}, {\"subject\": \"Offre exceptionnelle réservée aux professionnels\", \"category\": \"spam probable\", \"priority\": 1, \"senders\": [\"promo@offres-express.example\", \"contact@gains-rapides.example\"], \"bodies\": [\"Profitez aujourd’hui seulement d’une remise exceptionnelle sur notre catalogue professionnel.\", \"Votre entreprise a été sélectionnée pour recevoir un avantage exclusif sans engagement.\", \"Cliquez sur notre lien pour confirmer vos coordonnées avant la fin de la journée.\", \"Il ne reste que quelques heures pour bénéficier de cette proposition commerciale.\", \"Dernier rappel : votre avantage expirera ce soir à minuit.\"]}, {\"subject\": \"Mise à jour des accès au bureau\", \"category\": \"autre\", \"priority\": 2, \"senders\": [\"accueil@espace-republique.fr\", \"support@espace-republique.fr\"], \"bodies\": [\"Bonjour, le système de badges sera mis à jour ce week-end dans l’ensemble du bâtiment.\", \"Merci de vérifier votre numéro de badge dans votre espace locataire avant jeudi.\", \"Une permanence sera disponible vendredi matin pour remplacer les badges non reconnus.\", \"Les tests sont terminés et tous les accès principaux fonctionnent normalement.\", \"N’hésitez pas à contacter l’accueil si vous rencontrez encore une difficulté d’accès.\"]}];\nconst messages = [];\nthreads.forEach((thread, threadIndex) => {\n  thread.bodies.forEach((body, messageIndex) => {\n    const number = threadIndex * 5 + messageIndex + 1;\n    messages.push({ json: {\n      benchmark_mode: config.benchmark_mode,\n      benchmark_started_ms: config.benchmark_started_ms,\n      logical_call_limit: config.logical_call_limit,\n      transport_attempt_limit: config.transport_attempt_limit,\n      fixture_id: `demo-seed-v1-message-${String(threadIndex + 1).padStart(2, '0')}-${String(messageIndex + 1).padStart(2, '0')}`,\n      subject: messageIndex === 0 ? thread.subject : `Re: ${thread.subject}`,\n      body,\n    } });\n  });\n});\nif (messages.length !== 30) throw new Error(`Jeu seed_demo incohérent: ${messages.length} messages.`);\nconst completedIds = new Set((config.checkpoint_results ?? []).map((result) => result.fixture_id));\nconst remaining = messages.filter((item) => !completedIds.has(item.json.fixture_id));\nif (config.benchmark_mode === 'batch' && remaining.length === 0) throw new Error('Les 30 messages ont déjà été évalués.');\nreturn remaining.slice(0, config.message_limit).map((item) => ({ json: {\n  ...item.json,\n  benchmark_mode: config.benchmark_mode,\n  checkpoint_results: config.checkpoint_results ?? [],\n  checkpoint_groups: config.checkpoint_groups ?? [],\n} }));"
+      },
+      "id": "generate-fixtures",
+      "name": "Charger les 30 e-mails seed_demo",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -752,
+        0
+      ],
+      "notesInFlow": true,
+      "notes": "Copie déterministe exacte des sujets et contenus définis dans scripts/seed_demo.py."
+    },
+    {
+      "parameters": {
+        "batchSize": 1,
+        "options": {}
+      },
+      "id": "sequential-loop",
+      "name": "Traiter un message à la fois",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        -528,
+        0
+      ],
+      "notesInFlow": true,
+      "notes": "Traitement strictement séquentiel; 1 message par itération."
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "return $input.all().map((item) => ({ json: {\n  ...item.json,\n  classification_started_ms: Date.now(),\n} }));"
+      },
+      "id": "classification-input",
+      "name": "Entrée classification",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -304,
+        96
+      ]
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "=Classe cet e-mail.\n\nObjet : {{ $json.subject }}\n\nContenu :\n{{ $json.body }}",
+        "messages": {
+          "messageValues": [
+            {
+              "type": "SystemMessagePromptTemplate",
+              "message": "Tu classes des e-mails professionnels en français. Réponds uniquement avec un objet JSON brut, sans Markdown, sans commentaire et sans clé supplémentaire. Le JSON doit contenir exactement : category, priority, summary, expected_action. category doit être exactement l'une des valeurs suivantes : client, facture, rendez-vous, newsletter, spam probable, autre. priority doit être un entier entre 1 et 3. summary doit être une phrase non vide de 1000 caractères maximum. expected_action doit être une chaîne non vide de 2000 caractères maximum."
+            }
+          ]
+        },
+        "batching": {}
+      },
+      "id": "benchmark-gemini-initial",
+      "name": "Classification Gemini",
+      "type": "@n8n/n8n-nodes-langchain.chainLlm",
+      "typeVersion": 1.9,
+      "position": [
+        -80,
+        96
+      ],
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 5000,
+      "continueOnFail": true,
+      "notesInFlow": true,
+      "notes": "Une erreur temporaire, notamment 429, 503 ou timeout, est retentée une fois après 5 secondes puis transmise à la tentative de correction."
+    },
+    {
+      "parameters": {
+        "jsCode": "const allowedCategories = new Set(['client', 'facture', 'rendez-vous', 'newsletter', 'spam probable', 'autre']);\nconst requiredKeys = ['category', 'expected_action', 'priority', 'summary'];\n\nfunction validate(raw) {\n  try {\n    if (typeof raw !== 'string') return null;\n    const parsed = JSON.parse(raw.trim());\n    if (!parsed || Array.isArray(parsed) || typeof parsed !== 'object') return null;\n    const keys = Object.keys(parsed).sort();\n    if (JSON.stringify(keys) !== JSON.stringify(requiredKeys)) return null;\n    if (!allowedCategories.has(parsed.category)) return null;\n    if (!Number.isInteger(parsed.priority) || parsed.priority < 1 || parsed.priority > 3) return null;\n    if (typeof parsed.summary !== 'string' || !parsed.summary.trim() || parsed.summary.trim().length > 1000) return null;\n    if (typeof parsed.expected_action !== 'string' || !parsed.expected_action.trim() || parsed.expected_action.trim().length > 2000) return null;\n    return {\n      category: parsed.category,\n      priority: parsed.priority,\n      summary: parsed.summary.trim(),\n      expected_action: parsed.expected_action.trim(),\n      needs_review: false,\n    };\n  } catch {\n    return null;\n  }\n}\n\nreturn $input.all().map((item) => {\n  const classification = validate(item.json.text);\n  return { json: { valid: classification !== null, classification, raw: item.json.text ?? '' } };\n});"
+      },
+      "id": "benchmark-validate-initial",
+      "name": "Valider JSON initial",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        144,
+        96
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const input = $('Entrée classification').item.json;\nconst response = $('Classification Gemini').item.json;\nconst serializedError = JSON.stringify(response?.error ?? '');\nconst technicalError = Boolean(response?.error);\nconst http429 = technicalError && /(?:\\b429\\b|quota|resource.?exhausted|rate.?limit)/i.test(serializedError);\nconst http503 = technicalError && /(?:\\b503\\b|service.?unavailable|temporarily.?unavailable)/i.test(serializedError);\nreturn [{ json: {\n  ...input,\n  raw: $json.raw ?? '',\n  first_valid: $json.valid === true && !technicalError,\n  first_classification: $json.classification ?? null,\n  technical_error: technicalError,\n  http_429_error: http429,\n  http_503_error: http503,\n  quota_error: http429 || http503,\n  error_code: http429 ? 'http_429' : (http503 ? 'http_503' : (technicalError ? 'gemini_initial_error' : null)),\n} }];"
+      },
+      "id": "preserve-initial",
+      "name": "Conserver métriques initiales",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        368,
+        96
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "initial-valid-condition",
+              "leftValue": "={{ $json.first_valid === true }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "initial-valid",
+      "name": "JSON initial valide ?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        592,
+        32
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "initial-technical-condition",
+              "leftValue": "={{ $json.technical_error === true }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "initial-technical",
+      "name": "Erreur technique initiale ?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        816,
+        176
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "return [{ json: {\n  fixture_id: $json.fixture_id,\n  first_attempt_valid: true,\n  retry_used: false,\n  retry_valid: false,\n  fallback_used: false,\n  first_attempt_technical_error: false,\n  technical_error: false,\n  quota_error: false,\n  http_429_error: false,\n  http_503_error: false,\n  initial_json_invalid: false,\n  retry_json_invalid: false,\n  error_code: null,\n  duration_ms: Date.now() - $json.classification_started_ms,\n  benchmark_started_ms: $json.benchmark_started_ms,\n  logical_calls: 1,\n  benchmark_mode: $json.benchmark_mode,\n  checkpoint_results: $json.checkpoint_results,\n  checkpoint_groups: $json.checkpoint_groups,\n} }];"
+      },
+      "id": "finish-initial",
+      "name": "Résultat valide au premier essai",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        816,
+        -64
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "return [{ json: {\n  fixture_id: $json.fixture_id,\n  first_attempt_valid: false,\n  retry_used: false,\n  retry_valid: false,\n  fallback_used: true,\n  first_attempt_technical_error: true,\n  technical_error: true,\n  quota_error: $json.quota_error === true,\n  http_429_error: $json.http_429_error === true,\n  http_503_error: $json.http_503_error === true,\n  initial_json_invalid: false,\n  retry_json_invalid: false,\n  error_code: $json.error_code || 'gemini_initial_error',\n  duration_ms: Date.now() - $json.classification_started_ms,\n  benchmark_started_ms: $json.benchmark_started_ms,\n  logical_calls: 1,\n  benchmark_mode: $json.benchmark_mode,\n  checkpoint_results: $json.checkpoint_results,\n  checkpoint_groups: $json.checkpoint_groups,\n} }];"
+      },
+      "id": "finish-technical",
+      "name": "Résultat erreur technique",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1040,
+        96
+      ]
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "=La réponse précédente n'est pas un JSON valide :\n{{ $json.raw }}\n\nReclasse cet e-mail et corrige strictement la sortie.\n\nObjet : {{ $('Entrée classification').item.json.subject }}\n\nContenu :\n{{ $('Entrée classification').item.json.body }}",
+        "messages": {
+          "messageValues": [
+            {
+              "type": "SystemMessagePromptTemplate",
+              "message": "Ceci est l'unique tentative de correction. Réponds uniquement avec un objet JSON brut, sans Markdown, sans commentaire et sans clé supplémentaire. Il doit contenir exactement category, priority, summary, expected_action. category : client, facture, rendez-vous, newsletter, spam probable ou autre. priority : entier de 1 à 3. summary : phrase non vide de 1000 caractères maximum. expected_action : chaîne non vide de 2000 caractères maximum."
+            }
+          ]
+        },
+        "batching": {}
+      },
+      "id": "benchmark-gemini-retry",
+      "name": "Nouvelle tentative Gemini",
+      "type": "@n8n/n8n-nodes-langchain.chainLlm",
+      "typeVersion": 1.9,
+      "position": [
+        1040,
+        256
+      ],
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 10000,
+      "continueOnFail": true,
+      "notesInFlow": true,
+      "notes": "Une seule correction logique est effectuée. Une erreur temporaire est retentée une fois après 10 secondes, formant un backoff borné 5 s puis 10 s."
+    },
+    {
+      "parameters": {
+        "jsCode": "const allowedCategories = new Set(['client', 'facture', 'rendez-vous', 'newsletter', 'spam probable', 'autre']);\nconst requiredKeys = ['category', 'expected_action', 'priority', 'summary'];\n\nfunction validate(raw) {\n  try {\n    if (typeof raw !== 'string') return null;\n    const parsed = JSON.parse(raw.trim());\n    if (!parsed || Array.isArray(parsed) || typeof parsed !== 'object') return null;\n    const keys = Object.keys(parsed).sort();\n    if (JSON.stringify(keys) !== JSON.stringify(requiredKeys)) return null;\n    if (!allowedCategories.has(parsed.category)) return null;\n    if (!Number.isInteger(parsed.priority) || parsed.priority < 1 || parsed.priority > 3) return null;\n    if (typeof parsed.summary !== 'string' || !parsed.summary.trim() || parsed.summary.trim().length > 1000) return null;\n    if (typeof parsed.expected_action !== 'string' || !parsed.expected_action.trim() || parsed.expected_action.trim().length > 2000) return null;\n    return {\n      category: parsed.category,\n      priority: parsed.priority,\n      summary: parsed.summary.trim(),\n      expected_action: parsed.expected_action.trim(),\n      needs_review: false,\n    };\n  } catch {\n    return null;\n  }\n}\n\nreturn $input.all().map((item) => {\n  const classification = validate(item.json.text);\n  return { json: { valid: classification !== null, classification } };\n});"
+      },
+      "id": "benchmark-validate-retry",
+      "name": "Valider JSON nouvelle tentative",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1264,
+        256
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const initial = $('Conserver métriques initiales').item.json;\nconst response = $('Nouvelle tentative Gemini').item.json;\nconst serializedError = JSON.stringify(response?.error ?? '');\nconst technicalError = Boolean(response?.error);\nconst http429 = technicalError && /(?:\\b429\\b|quota|resource.?exhausted|rate.?limit)/i.test(serializedError);\nconst http503 = technicalError && /(?:\\b503\\b|service.?unavailable|temporarily.?unavailable)/i.test(serializedError);\nreturn [{ json: {\n  ...initial,\n  retry_valid: $json.valid === true && !technicalError,\n  retry_technical_error: technicalError,\n  retry_http_429_error: http429,\n  retry_http_503_error: http503,\n  retry_quota_error: http429 || http503,\n  retry_error_code: http429 ? 'http_429' : (http503 ? 'http_503' : (technicalError ? 'gemini_retry_error' : null)),\n} }];"
+      },
+      "id": "preserve-retry",
+      "name": "Conserver métriques correction",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1488,
+        256
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const valid = $json.retry_valid === true;\nconst technical = $json.retry_technical_error === true;\nreturn [{ json: {\n  fixture_id: $json.fixture_id,\n  first_attempt_valid: false,\n  retry_used: true,\n  retry_valid: valid,\n  fallback_used: !valid,\n  first_attempt_technical_error: false,\n  technical_error: technical,\n  quota_error: $json.retry_quota_error === true,\n  http_429_error: $json.retry_http_429_error === true,\n  http_503_error: $json.retry_http_503_error === true,\n  initial_json_invalid: true,\n  retry_json_invalid: !valid && !technical,\n  error_code: valid ? null : ($json.retry_error_code || 'invalid_json_after_retry'),\n  duration_ms: Date.now() - $json.classification_started_ms,\n  benchmark_started_ms: $json.benchmark_started_ms,\n  logical_calls: 2,\n  benchmark_mode: $json.benchmark_mode,\n  checkpoint_results: $json.checkpoint_results,\n  checkpoint_groups: $json.checkpoint_groups,\n} }];"
+      },
+      "id": "finish-retry",
+      "name": "Résultat après correction",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1712,
+        256
+      ]
+    },
+    {
+      "parameters": {
+        "resume": "timeInterval",
+        "amount": 5,
+        "unit": "seconds"
+      },
+      "id": "bounded-pause",
+      "name": "Pause 5 secondes",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        1936,
+        96
+      ],
+      "notesInFlow": true,
+      "notes": "Pause fixe entre deux messages. Les retries transport restent bornés dans les nœuds Gemini."
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const currentResults = $input.all().map((item) => item.json);\nif (currentResults.length < 1 || currentResults.length > 10) throw new Error(`Taille de groupe interdite: ${currentResults.length}.`);\nconst first = currentResults[0];\nconst calibrationOnly = first.benchmark_mode === 'single';\nconst previousResults = calibrationOnly ? [] : (first.checkpoint_results ?? []);\nconst previousGroups = calibrationOnly ? [] : (first.checkpoint_groups ?? []);\nconst clean = (result) => {\n  const { benchmark_started_ms, benchmark_mode, checkpoint_results, checkpoint_groups, ...safe } = result;\n  return safe;\n};\nconst newResults = currentResults.map(clean);\nconst results = calibrationOnly ? newResults : [...previousResults, ...newResults];\nconst fixtureIds = results.map((result) => result.fixture_id);\nif (new Set(fixtureIds).size !== fixtureIds.length) throw new Error('Résultats dupliqués dans le checkpoint.');\nif (results.length > 30) throw new Error(`Nombre total de résultats interdit: ${results.length}.`);\nconst groupDuration = Date.now() - first.benchmark_started_ms;\nconst groups = calibrationOnly ? [] : [...previousGroups, {\n  group_number: previousGroups.length + 1,\n  message_count: newResults.length,\n  duration_ms: groupDuration,\n  completed_at: new Date().toISOString(),\n}];\nconst initialValid = results.filter((r) => r.first_attempt_valid).length;\nconst technicalErrors = results.filter((r) => r.technical_error).length;\nconst initialInvalid = results.filter((r) => r.initial_json_invalid).length;\nconst retries = results.filter((r) => r.retry_used).length;\nconst corrected = results.filter((r) => r.retry_used && r.retry_valid).length;\nconst retryInvalid = results.filter((r) => r.retry_json_invalid).length;\nconst fallbacks = results.filter((r) => r.fallback_used).length;\nconst http429Errors = results.filter((r) => r.http_429_error).length;\nconst http503Errors = results.filter((r) => r.http_503_error).length;\nconst logicalCalls = results.reduce((sum, r) => sum + (r.logical_calls ?? (r.retry_used ? 2 : 1)), 0);\nconst logicalLimit = results.length * 2;\nif (logicalCalls > logicalLimit) throw new Error(`Plafond d'appels dépassé: ${logicalCalls}/${logicalLimit}.`);\nconst durationSum = results.reduce((sum, r) => sum + r.duration_ms, 0);\nconst completed = !calibrationOnly && results.length === 30;\nconst checkpoint = {\n  version: 1,\n  dataset_id: 'seed-demo-v1',\n  model: 'models/gemini-3.5-flash',\n  results: calibrationOnly ? [] : results,\n  groups,\n};\nreturn [{ json: {\n  benchmark: calibrationOnly ? 'single_calibration' : 'resumable_30',\n  group_messages: currentResults.length,\n  total_messages: results.length,\n  remaining_messages: calibrationOnly ? 30 : 30 - results.length,\n  completed,\n  initial_valid: initialValid,\n  initial_invalid: initialInvalid,\n  retries_used: retries,\n  corrections_succeeded: corrected,\n  json_invalid_after_retry: retryInvalid,\n  fallbacks_used: fallbacks,\n  technical_errors: technicalErrors,\n  http_429_errors: http429Errors,\n  http_503_errors: http503Errors,\n  initial_success_percentage: completed ? Number(((initialValid / 30) * 100).toFixed(2)) : null,\n  logical_model_calls: logicalCalls,\n  logical_call_limit: logicalLimit,\n  transport_attempt_limit: results.length * 4,\n  total_duration_ms: calibrationOnly ? groupDuration : groups.reduce((sum, group) => sum + group.duration_ms, 0),\n  average_classification_duration_ms: Number((durationSum / results.length).toFixed(2)),\n  results,\n  checkpoint,\n} }];"
+      },
+      "id": "aggregate-results",
+      "name": "Calculer métriques finales",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -304,
+        -224
+      ]
+    },
+    {
+      "parameters": {
+        "modelName": "models/gemini-3.5-flash",
+        "options": {
+          "maxOutputTokens": 1024,
+          "temperature": 0.1
+        }
+      },
+      "id": "benchmark-gemini-model",
+      "name": "Google Gemini Chat Model",
+      "type": "@n8n/n8n-nodes-langchain.lmChatGoogleGemini",
+      "typeVersion": 1.2,
+      "position": [
+        592,
+        480
+      ],
+      "notesInFlow": true,
+      "notes": "Sélectionner manuellement le credential Gemini dans l’instance n8n isolée. Aucun identifiant de credential dans cet export."
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const report = $json;\nconst columns = ['fixture_id','first_attempt_valid','initial_json_invalid','retry_used','retry_valid','retry_json_invalid','fallback_used','first_attempt_technical_error','technical_error','http_429_error','http_503_error','error_code','duration_ms'];\nconst escape = (value) => {\n  const text = value === null || value === undefined ? '' : String(value);\n  return /[\";,\\n]/.test(text) ? `\"${text.replace(/\"/g, '\"\"')}\"` : text;\n};\nconst csv = [columns.join(';'), ...report.results.map((row) => columns.map((column) => escape(row[column])).join(';'))].join('\\n');\nconst suffix = report.benchmark === 'single_calibration' ? 'calibration' : String(report.total_messages).padStart(2, '0');\nreturn [{\n  json: report,\n  binary: {\n    checkpoint: {\n      data: Buffer.from(JSON.stringify(report.checkpoint, null, 2), 'utf8').toString('base64'),\n      mimeType: 'application/json',\n      fileName: `gemini-benchmark-checkpoint-${suffix}.json`,\n    },\n    results: {\n      data: Buffer.from(csv, 'utf8').toString('base64'),\n      mimeType: 'text/csv',\n      fileName: `gemini-classification-benchmark-${suffix}.csv`,\n    },\n  },\n}];"
+      },
+      "id": "csv-export",
+      "name": "Créer exports checkpoint et CSV",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        0,
+        -224
+      ],
+      "notesInFlow": true,
+      "notes": "Le CSV contient uniquement les identifiants fictifs, indicateurs et durées."
+    }
+  ],
+  "connections": {
+    "Déclenchement manuel uniquement": {
+      "main": [
+        [
+          {
+            "node": "Configurer benchmark",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Configurer benchmark": {
+      "main": [
+        [
+          {
+            "node": "Charger les 30 e-mails seed_demo",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Charger les 30 e-mails seed_demo": {
+      "main": [
+        [
+          {
+            "node": "Traiter un message à la fois",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Traiter un message à la fois": {
+      "main": [
+        [
+          {
+            "node": "Calculer métriques finales",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Entrée classification",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Entrée classification": {
+      "main": [
+        [
+          {
+            "node": "Classification Gemini",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Google Gemini Chat Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Classification Gemini",
+            "type": "ai_languageModel",
+            "index": 0
+          },
+          {
+            "node": "Nouvelle tentative Gemini",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Classification Gemini": {
+      "main": [
+        [
+          {
+            "node": "Valider JSON initial",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Valider JSON initial": {
+      "main": [
+        [
+          {
+            "node": "Conserver métriques initiales",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Conserver métriques initiales": {
+      "main": [
+        [
+          {
+            "node": "JSON initial valide ?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "JSON initial valide ?": {
+      "main": [
+        [
+          {
+            "node": "Résultat valide au premier essai",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Erreur technique initiale ?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Erreur technique initiale ?": {
+      "main": [
+        [
+          {
+            "node": "Résultat erreur technique",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Nouvelle tentative Gemini",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Nouvelle tentative Gemini": {
+      "main": [
+        [
+          {
+            "node": "Valider JSON nouvelle tentative",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Valider JSON nouvelle tentative": {
+      "main": [
+        [
+          {
+            "node": "Conserver métriques correction",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Conserver métriques correction": {
+      "main": [
+        [
+          {
+            "node": "Résultat après correction",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Résultat valide au premier essai": {
+      "main": [
+        [
+          {
+            "node": "Pause 5 secondes",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Résultat erreur technique": {
+      "main": [
+        [
+          {
+            "node": "Pause 5 secondes",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Résultat après correction": {
+      "main": [
+        [
+          {
+            "node": "Pause 5 secondes",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Pause 5 secondes": {
+      "main": [
+        [
+          {
+            "node": "Traiter un message à la fois",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Calculer métriques finales": {
+      "main": [
+        [
+          {
+            "node": "Créer exports checkpoint et CSV",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true
+  },
+  "tags": []
+}
