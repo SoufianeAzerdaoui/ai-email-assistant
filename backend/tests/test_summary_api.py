@@ -3,7 +3,7 @@
 import os
 import unittest
 import warnings
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from uuid import uuid4
 
 os.environ.setdefault("JWT_SECRET", "test-secret-that-is-at-least-32-characters")
@@ -21,6 +21,7 @@ from app.auth import create_access_token
 from app.database import get_db
 from app.main import app
 from app.models import Email, Thread, User
+from app.summary_routes import paris_day_bounds_utc
 
 
 @unittest.skipUnless(os.environ.get("TEST_DATABASE_URL"), "TEST_DATABASE_URL is required")
@@ -159,3 +160,65 @@ class SummaryApiTests(unittest.TestCase):
             self.client.get("/summary?date=15-06-2026", headers=self.headers).status_code,
             422,
         )
+
+    def test_paris_day_bounds_follow_winter_summer_and_dst_transitions(self):
+        cases = (
+            (
+                date(2026, 1, 15),
+                datetime(2026, 1, 14, 23, tzinfo=timezone.utc),
+                datetime(2026, 1, 15, 23, tzinfo=timezone.utc),
+                24,
+            ),
+            (
+                date(2026, 6, 15),
+                datetime(2026, 6, 14, 22, tzinfo=timezone.utc),
+                datetime(2026, 6, 15, 22, tzinfo=timezone.utc),
+                24,
+            ),
+            (
+                date(2026, 3, 29),
+                datetime(2026, 3, 28, 23, tzinfo=timezone.utc),
+                datetime(2026, 3, 29, 22, tzinfo=timezone.utc),
+                23,
+            ),
+            (
+                date(2026, 10, 25),
+                datetime(2026, 10, 24, 22, tzinfo=timezone.utc),
+                datetime(2026, 10, 25, 23, tzinfo=timezone.utc),
+                25,
+            ),
+        )
+
+        for day, expected_start, expected_end, expected_hours in cases:
+            with self.subTest(day=day):
+                start, end = paris_day_bounds_utc(day)
+                self.assertEqual(start, expected_start)
+                self.assertEqual(end, expected_end)
+                self.assertEqual((end - start).total_seconds(), expected_hours * 3600)
+
+    def test_summary_uses_half_open_paris_day_bounds(self):
+        day = date(2026, 3, 29)
+        start, end = paris_day_bounds_utc(day)
+        timestamps = (
+            start - timedelta(microseconds=1),
+            start,
+            end - timedelta(microseconds=1),
+            end,
+        )
+        for index, received_at in enumerate(timestamps):
+            self.session.add(self.make_email(
+                user=self.user,
+                thread=self.thread,
+                received_at=received_at,
+                status="pending",
+                priority=index % 3 + 1,
+                category="client",
+            ))
+        self.session.commit()
+
+        response = self.client.get("/summary?date=2026-03-29", headers=self.headers)
+
+        self.assertEqual(response.status_code, 200)
+        data = response.json()
+        self.assertEqual(data["total_emails"], 2)
+        self.assertEqual(data["pending_emails"], 2)

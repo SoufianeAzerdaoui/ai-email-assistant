@@ -3,6 +3,7 @@
 import os
 import unittest
 import warnings
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from uuid import uuid4
 
@@ -14,11 +15,13 @@ warnings.filterwarnings(
 )
 
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine, func, select
+from sqlalchemy import create_engine, delete, func, select
 from sqlalchemy.orm import Session
 
 from app.config import get_webhook_secret
 from app.database import get_db
+from app.gmail_import_routes import import_gmail_messages
+from app.gmail_import_schemas import GmailImportRequest
 from app.main import app
 from app.models import Email, Thread, User
 
@@ -124,7 +127,7 @@ class GmailImportWebhookTests(unittest.TestCase):
         ])
         self.assertEqual([task["body"] for task in tasks], [email.body_text for email in emails])
 
-    def test_reimport_is_idempotent(self):
+    def test_reimport_of_unclassified_messages_recovers_classification_tasks(self):
         first = self.post()
         second = self.post()
 
@@ -134,13 +137,103 @@ class GmailImportWebhookTests(unittest.TestCase):
         self.assertEqual(second.json()["duplicate_count"], 2)
         self.assertEqual(second.json()["repaired_count"], 0)
         self.assertEqual(second.json()["created_thread_count"], 0)
-        self.assertEqual(second.json()["classification_tasks"], [])
+        self.assertEqual(
+            [task["email_id"] for task in second.json()["classification_tasks"]],
+            [task["email_id"] for task in first.json()["classification_tasks"]],
+        )
         self.assertEqual(self.session.scalar(
             select(func.count()).select_from(Email).where(Email.user_id == self.user.id)
         ), 2)
         self.assertEqual(self.session.scalar(
             select(func.count()).select_from(Thread).where(Thread.user_id == self.user.id)
         ), 1)
+
+    def test_reimport_of_classified_message_does_not_redispatch_or_overwrite(self):
+        message = self.payload["messages"][0]
+        first = self.post({**self.payload, "messages": [message]})
+        email_id = first.json()["classification_tasks"][0]["email_id"]
+        email = self.session.get(Email, email_id)
+        expected = {
+            "category": "facture",
+            "priority": 3,
+            "summary": "Facture à régler.",
+            "expected_action": "Vérifier puis régler la facture.",
+            "needs_review": True,
+        }
+        for field, value in expected.items():
+            setattr(email, field, value)
+        self.session.commit()
+
+        response = self.post({
+            **self.payload,
+            "messages": [{
+                **message,
+                "subject": "Objet différent reçu pendant le retry",
+                "body_text": "Contenu différent reçu pendant le retry",
+            }],
+        })
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["imported_count"], 0)
+        self.assertEqual(response.json()["classification_tasks"], [])
+        self.session.refresh(email)
+        self.assertEqual(
+            {field: getattr(email, field) for field in expected},
+            expected,
+        )
+
+    def test_partial_classification_is_treated_as_already_in_progress(self):
+        message = self.payload["messages"][0]
+        first = self.post({**self.payload, "messages": [message]})
+        email = self.session.get(Email, first.json()["classification_tasks"][0]["email_id"])
+        email.category = "client"
+        self.session.commit()
+
+        response = self.post({**self.payload, "messages": [message]})
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["classification_tasks"], [])
+        self.session.refresh(email)
+        self.assertEqual(email.category, "client")
+        self.assertIsNone(email.priority)
+
+    def test_reimport_of_ten_unclassified_messages_recovers_the_whole_batch(self):
+        messages = [
+            self.message(
+                f"gmail-batch-message-{index}",
+                f"Message du lot {index}",
+                f"2026-10-17T{index:02d}:30:00+02:00",
+            )
+            for index in range(10)
+        ]
+        payload = {**self.payload, "messages": messages}
+
+        first = self.post(payload)
+        second = self.post(payload)
+
+        self.assertEqual(first.status_code, 200)
+        self.assertEqual(first.json()["imported_count"], 10)
+        self.assertEqual(len(first.json()["classification_tasks"]), 10)
+        self.assertEqual(second.status_code, 200)
+        self.assertEqual(second.json()["imported_count"], 0)
+        self.assertEqual(second.json()["duplicate_count"], 10)
+        self.assertEqual(len(second.json()["classification_tasks"]), 10)
+        self.assertEqual(self.session.scalar(
+            select(func.count()).select_from(Email).where(Email.user_id == self.user.id)
+        ), 10)
+
+    def test_lost_response_followed_by_retry_recovers_same_task(self):
+        message = self.payload["messages"][0]
+        first_response = self.post({**self.payload, "messages": [message]})
+        first_task = first_response.json()["classification_tasks"][0]
+
+        retry_response = self.post({**self.payload, "messages": [message]})
+
+        self.assertEqual(first_response.status_code, 200)
+        self.assertEqual(retry_response.status_code, 200)
+        self.assertEqual(retry_response.json()["imported_count"], 0)
+        self.assertEqual(retry_response.json()["duplicate_count"], 1)
+        self.assertEqual(retry_response.json()["classification_tasks"], [first_task])
 
     def test_prefers_plain_text_over_html(self):
         message = {
@@ -228,6 +321,11 @@ class GmailImportWebhookTests(unittest.TestCase):
             )
         ), 2)
 
+        original_tasks = self.post().json()["classification_tasks"]
+        other_tasks = self.post(other_payload).json()["classification_tasks"]
+        self.assertTrue(all(task["user_id"] == str(self.user.id) for task in original_tasks))
+        self.assertTrue(all(task["user_id"] == str(self.other_user.id) for task in other_tasks))
+
     def test_requires_secret_and_existing_user(self):
         self.assertEqual(self.post(headers={}).status_code, 401)
         self.assertEqual(self.post(headers={"X-Webhook-Secret": "wrong"}).status_code, 401)
@@ -249,3 +347,53 @@ class GmailImportWebhookTests(unittest.TestCase):
         self.assertEqual(self.session.scalar(
             select(func.count()).select_from(Email).where(Email.user_id == self.user.id)
         ), 0)
+
+
+@unittest.skipUnless(os.environ.get("TEST_DATABASE_URL"), "TEST_DATABASE_URL is required")
+class GmailImportConcurrencyTests(unittest.TestCase):
+    def test_concurrent_imports_create_one_email_and_one_thread(self):
+        engine = create_engine(os.environ["TEST_DATABASE_URL"])
+        unique = uuid4()
+        with Session(engine) as db:
+            user = User(email=f"{unique}@example.test", password_hash="test-hash")
+            db.add(user)
+            db.commit()
+            user_id = user.id
+
+        payload = {
+            "user_id": str(user_id),
+            "messages": [{
+                "gmail_message_id": f"concurrent-message-{unique}",
+                "gmail_thread_id": f"concurrent-thread-{unique}",
+                "message_id": f"<concurrent-{unique}@example.test>",
+                "sender": "sender@example.test",
+                "recipients": ["recipient@example.test"],
+                "subject": "Import concurrent",
+                "body_text": "Un seul message doit être enregistré.",
+                "received_at": "2026-10-19T10:00:00+02:00",
+            }],
+        }
+
+        def run_import(_):
+            with Session(engine) as db:
+                return import_gmail_messages(GmailImportRequest.model_validate(payload), db)
+
+        try:
+            with ThreadPoolExecutor(max_workers=8) as executor:
+                responses = list(executor.map(run_import, range(8)))
+
+            self.assertEqual(sum(response.imported_count for response in responses), 1)
+            with Session(engine) as db:
+                self.assertEqual(db.scalar(
+                    select(func.count()).select_from(Email).where(Email.user_id == user_id)
+                ), 1)
+                self.assertEqual(db.scalar(
+                    select(func.count()).select_from(Thread).where(Thread.user_id == user_id)
+                ), 1)
+        finally:
+            with Session(engine) as db:
+                db.execute(delete(Email).where(Email.user_id == user_id))
+                db.execute(delete(Thread).where(Thread.user_id == user_id))
+                db.execute(delete(User).where(User.id == user_id))
+                db.commit()
+            engine.dispose()
