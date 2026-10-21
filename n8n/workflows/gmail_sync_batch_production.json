@@ -41,9 +41,15 @@
         "assignments": {
           "assignments": [
             {
+              "id": "mailflow-backend-url",
+              "name": "backend_url",
+              "value": "http://host.docker.internal:8000",
+              "type": "string"
+            },
+            {
               "id": "mailflow-user-id",
               "name": "user_id",
-              "value": "={{ $env.MAILFLOW_USER_ID }}",
+              "value": "CONFIGURER_UUID_MAILFLOW",
               "type": "string"
             },
             {
@@ -71,7 +77,7 @@
         304
       ],
       "notesInFlow": true,
-      "notes": "Renseigner l'UUID Mailflow. test_mode=true limite la liste à 50 messages et interdit tout commit de historyId. classify_in_test_mode=false empêche une analyse Gemini massive pendant les essais."
+      "notes": "Configuration non sensible. Renseigner l'UUID Mailflow avant activation. Conserver http://host.docker.internal:8000 en architecture hybride ; pour le Compose complet, remplacer uniquement backend_url par http://backend:8000. test_mode=true limite la liste à 50 messages et interdit tout commit de historyId. classify_in_test_mode=false empêche une analyse Gemini massive pendant les essais."
     },
     {
       "parameters": {
@@ -88,7 +94,7 @@
     },
     {
       "parameters": {
-        "url": "={{ $env.BACKEND_URL }}/internal/webhooks/gmail/sync-state/{{ $json.user_id }}",
+        "url": "={{ $('Configurer utilisateur').first().json.backend_url + '/internal/webhooks/gmail/sync-state/' + $json.user_id }}",
         "authentication": "genericCredentialType",
         "genericAuthType": "httpHeaderAuth",
         "options": {
@@ -112,7 +118,7 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "={{ $env.BACKEND_URL }}/internal/webhooks/gmail/sync-state/claim",
+        "url": "={{ $('Configurer utilisateur').first().json.backend_url + '/internal/webhooks/gmail/sync-state/claim' }}",
         "authentication": "genericCredentialType",
         "genericAuthType": "httpHeaderAuth",
         "sendBody": true,
@@ -697,7 +703,7 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "={{ $env.BACKEND_URL }}/internal/webhooks/gmail/messages",
+        "url": "={{ $('Configurer utilisateur').first().json.backend_url + '/internal/webhooks/gmail/messages' }}",
         "authentication": "genericCredentialType",
         "genericAuthType": "httpHeaderAuth",
         "sendBody": true,
@@ -848,7 +854,7 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "={{ $env.BACKEND_URL }}/internal/webhooks/workflow-errors",
+        "url": "={{ $('Configurer utilisateur').first().json.backend_url + '/internal/webhooks/workflow-errors' }}",
         "authentication": "genericCredentialType",
         "genericAuthType": "httpHeaderAuth",
         "sendBody": true,
@@ -955,7 +961,7 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "={{ $env.BACKEND_URL }}/internal/webhooks/gmail/sync-state/commit",
+        "url": "={{ $('Configurer utilisateur').first().json.backend_url + '/internal/webhooks/gmail/sync-state/commit' }}",
         "authentication": "genericCredentialType",
         "genericAuthType": "httpHeaderAuth",
         "sendBody": true,

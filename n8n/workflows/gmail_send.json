@@ -155,7 +155,7 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "={{ $env.BACKEND_URL }}/internal/webhooks/gmail-send-result",
+        "url": "={{ $('Configuration Mailflow').first().json.backend_url + '/internal/webhooks/gmail-send-result' }}",
         "authentication": "genericCredentialType",
         "genericAuthType": "httpHeaderAuth",
         "sendBody": true,
@@ -178,7 +178,7 @@
       "maxTries": 3,
       "waitBetweenTries": 5000,
       "notesInFlow": true,
-      "notes": "Credential requis : \"Mailflow - Vers FastAPI\", Header Auth X-Webhook-Secret = WEBHOOK_SECRET du backend. Un échec reste visible et ne reboucle jamais vers messages.send; seul le callback idempotent est retenté. BACKEND_URL doit viser FastAPI depuis Docker."
+      "notes": "Credential requis : \"Mailflow - Vers FastAPI\", Header Auth X-Webhook-Secret = WEBHOOK_SECRET du backend. Un échec reste visible et ne reboucle jamais vers messages.send; seul le callback idempotent est retenté. Le nœud Configuration Mailflow définit l'URL FastAPI depuis Docker."
     },
     {
       "parameters": {
@@ -228,6 +228,32 @@
       ],
       "notesInFlow": true,
       "notes": "Conserve la réponse FastAPI en sending. Réconcilier avec l'ID Gmail observé, sans réexécuter messages.send."
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "mailflow-backend-url",
+              "name": "backend_url",
+              "value": "http://host.docker.internal:8000",
+              "type": "string"
+            }
+          ]
+        },
+        "includeOtherFields": true,
+        "options": {}
+      },
+      "id": "785a713b-098c-4e55-8a97-d5f4a1743459",
+      "name": "Configuration Mailflow",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        224,
+        320
+      ],
+      "notesInFlow": true,
+      "notes": "Configuration non sensible. Pour l'architecture hybride, conserver http://host.docker.internal:8000. Pour Docker Compose complet, remplacer uniquement cette valeur par http://backend:8000."
     }
   ],
   "connections": {
@@ -235,7 +261,7 @@
       "main": [
         [
           {
-            "node": "Valider demande",
+            "node": "Configuration Mailflow",
             "type": "main",
             "index": 0
           }
@@ -327,6 +353,17 @@
         [
           {
             "node": "Suspendre résultat ambigu",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Configuration Mailflow": {
+      "main": [
+        [
+          {
+            "node": "Valider demande",
             "type": "main",
             "index": 0
           }

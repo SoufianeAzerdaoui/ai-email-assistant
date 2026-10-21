@@ -271,7 +271,7 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "={{ $env.BACKEND_URL }}/internal/webhooks/classification",
+        "url": "={{ $('Configuration Mailflow').first().json.backend_url + '/internal/webhooks/classification' }}",
         "authentication": "genericCredentialType",
         "genericAuthType": "httpHeaderAuth",
         "sendBody": true,
@@ -333,7 +333,7 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "={{ $env.BACKEND_URL }}/internal/webhooks/workflow-errors",
+        "url": "={{ $('Configuration Mailflow').first().json.backend_url + '/internal/webhooks/workflow-errors' }}",
         "authentication": "genericCredentialType",
         "genericAuthType": "httpHeaderAuth",
         "sendBody": true,
@@ -357,6 +357,32 @@
       "waitBetweenTries": 5000,
       "notesInFlow": true,
       "notes": "Credential requis : \"Mailflow - Vers FastAPI\". Le payload contient uniquement des codes et identifiants techniques, jamais la réponse brute Gemini ni un secret."
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "mailflow-backend-url",
+              "name": "backend_url",
+              "value": "http://host.docker.internal:8000",
+              "type": "string"
+            }
+          ]
+        },
+        "includeOtherFields": true,
+        "options": {}
+      },
+      "id": "8a64dceb-9f6a-4e77-8577-a89fe493e3e2",
+      "name": "Configuration Mailflow",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        448,
+        96
+      ],
+      "notesInFlow": true,
+      "notes": "Configuration non sensible. Pour l'architecture hybride, conserver http://host.docker.internal:8000. Pour Docker Compose complet, remplacer uniquement cette valeur par http://backend:8000."
     }
   ],
   "connections": {
@@ -364,7 +390,7 @@
       "main": [
         [
           {
-            "node": "Entrée classification",
+            "node": "Configuration Mailflow",
             "type": "main",
             "index": 0
           }
@@ -375,7 +401,7 @@
       "main": [
         [
           {
-            "node": "Entrée classification",
+            "node": "Configuration Mailflow",
             "type": "main",
             "index": 0
           }
@@ -533,6 +559,17 @@
         [
           {
             "node": "Journaliser erreur classification",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Configuration Mailflow": {
+      "main": [
+        [
+          {
+            "node": "Entrée classification",
             "type": "main",
             "index": 0
           }

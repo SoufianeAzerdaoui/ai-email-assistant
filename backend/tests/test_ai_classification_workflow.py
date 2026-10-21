@@ -33,6 +33,10 @@ class AiClassificationWorkflowTests(unittest.TestCase):
         self.assertIn("Déclenchement manuel", self.nodes)
         self.assertEqual(
             self.connections["Recevoir classification"]["main"][0][0]["node"],
+            "Configuration Mailflow",
+        )
+        self.assertEqual(
+            self.connections["Configuration Mailflow"]["main"][0][0]["node"],
             "Entrée classification",
         )
 
@@ -98,7 +102,8 @@ class AiClassificationWorkflowTests(unittest.TestCase):
         sanitizer = error_nodes["Préparer erreur sûre"]["parameters"]["jsCode"]
         self.assertNotIn("event.execution.error.message", sanitizer)
         self.assertNotIn("event.execution.error.stack", sanitizer)
-        self.assertIn("MAILFLOW_USER_ID", sanitizer)
+        self.assertIn("Configuration Mailflow", sanitizer)
+        self.assertNotIn("$env", sanitizer)
 
         event = {
             "workflow": {"id": "workflow-1", "name": "Mailflow test"},
@@ -113,7 +118,7 @@ class AiClassificationWorkflowTests(unittest.TestCase):
         }
         script = "\n".join((
             f"const $json = {json.dumps(event)};",
-            "const $env = { MAILFLOW_USER_ID: '11111111-1111-4111-8111-111111111111' };",
+            "const $ = () => ({ first: () => ({ json: { mailflow_user_id: '11111111-1111-4111-8111-111111111111' } }) });",
             f"const result = (() => {{ {sanitizer} }})();",
             "process.stdout.write(JSON.stringify(result[0].json));",
         ))

@@ -99,7 +99,7 @@
         "modelName": "models/gemini-3.5-flash",
         "options": {
           "maxOutputTokens": 2048,
-          "temperature": 0.3
+          "temperature": 0.1
         }
       },
       "id": "90bb8968-a39d-4d78-927a-88d65c42110b",
@@ -189,7 +189,7 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "={{ $env.BACKEND_URL }}/internal/webhooks/draft-result",
+        "url": "={{ $('Configuration Mailflow').first().json.backend_url + '/internal/webhooks/draft-result' }}",
         "authentication": "genericCredentialType",
         "genericAuthType": "httpHeaderAuth",
         "sendBody": true,
@@ -210,7 +210,33 @@
       "maxTries": 3,
       "waitBetweenTries": 5000,
       "notesInFlow": true,
-      "notes": "Credential requis : \"Mailflow - Vers FastAPI\", Header Auth X-Webhook-Secret = WEBHOOK_SECRET du backend. BACKEND_URL doit viser FastAPI depuis Docker."
+      "notes": "Credential requis : \"Mailflow - Vers FastAPI\", Header Auth X-Webhook-Secret = WEBHOOK_SECRET du backend. Le nœud Configuration Mailflow définit l'URL FastAPI depuis Docker."
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "mailflow-backend-url",
+              "name": "backend_url",
+              "value": "http://host.docker.internal:8000",
+              "type": "string"
+            }
+          ]
+        },
+        "includeOtherFields": true,
+        "options": {}
+      },
+      "id": "71a338e9-6318-47c0-abd7-653f93097ac9",
+      "name": "Configuration Mailflow",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        224,
+        400
+      ],
+      "notesInFlow": true,
+      "notes": "Configuration non sensible. Pour l'architecture hybride, conserver http://host.docker.internal:8000. Pour Docker Compose complet, remplacer uniquement cette valeur par http://backend:8000."
     }
   ],
   "connections": {
@@ -218,7 +244,7 @@
       "main": [
         [
           {
-            "node": "Valider payload",
+            "node": "Configuration Mailflow",
             "type": "main",
             "index": 0
           }
@@ -321,6 +347,17 @@
         [
           {
             "node": "Callback FastAPI",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Configuration Mailflow": {
+      "main": [
+        [
+          {
+            "node": "Valider payload",
             "type": "main",
             "index": 0
           }

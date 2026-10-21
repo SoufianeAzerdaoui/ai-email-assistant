@@ -38,7 +38,7 @@ class SecurityDockerExportTests(unittest.TestCase):
                 self.assertEqual(workflow.get("tags"), [])
                 self.assertNotRegex(serialized, email_pattern)
                 self.assertNotIn("replace-with", serialized)
-                self.assertNotIn("host.docker.internal", serialized)
+                self.assertNotIn("$env.", serialized)
                 for node in workflow["nodes"]:
                     self.assertNotIn("credentials", node)
                     self.assertNotIn("webhookId", node)
@@ -55,6 +55,63 @@ class SecurityDockerExportTests(unittest.TestCase):
             self.assertEqual(
                 models[0]["parameters"]["modelName"], "models/gemini-3.5-flash"
             )
+            self.assertEqual(models[0]["parameters"]["options"]["temperature"], 0.1)
+
+    def test_non_sensitive_configuration_is_centralized_per_workflow(self):
+        for name, workflow in self.workflows.items():
+            with self.subTest(export=name):
+                nodes = {node["name"]: node for node in workflow["nodes"]}
+                config_name = (
+                    "Configurer utilisateur"
+                    if name == "gmail_sync_batch_production.json"
+                    else "Configuration Mailflow"
+                )
+                assignments = {
+                    assignment["name"]: assignment["value"]
+                    for assignment in nodes[config_name]["parameters"]["assignments"][
+                        "assignments"
+                    ]
+                }
+                self.assertEqual(
+                    assignments["backend_url"], "http://host.docker.internal:8000"
+                )
+                serialized = json.dumps(workflow, ensure_ascii=False)
+                self.assertNotIn("$env.", serialized)
+                for node in workflow["nodes"]:
+                    url = node.get("parameters", {}).get("url", "")
+                    if "/internal/webhooks/" in url:
+                        self.assertIn(config_name, url)
+                        self.assertNotIn("{{ $json", url)
+
+    def test_every_trigger_executes_the_configuration_node_first(self):
+        expected = {
+            "gmail_sync_batch_production.json": (
+                "Configurer utilisateur",
+                ("Test manuel", "Toutes les 10 minutes"),
+            ),
+            "ai_classification.json": (
+                "Configuration Mailflow",
+                ("Déclenchement manuel", "Recevoir classification"),
+            ),
+            "ai_draft_generation.json": (
+                "Configuration Mailflow",
+                ("Recevoir génération",),
+            ),
+            "gmail_send.json": (
+                "Configuration Mailflow",
+                ("Recevoir demande d’envoi",),
+            ),
+            "workflow_error_handler.json": (
+                "Configuration Mailflow",
+                ("Erreur workflow",),
+            ),
+        }
+        for name, (config_name, trigger_names) in expected.items():
+            workflow = self.workflows[name]
+            for trigger_name in trigger_names:
+                with self.subTest(export=name, trigger=trigger_name):
+                    target = workflow["connections"][trigger_name]["main"][0][0]
+                    self.assertEqual(target["node"], config_name)
 
     def test_batch_export_is_safe_to_import_but_represents_the_active_schedule(self):
         workflow = self.workflows["gmail_sync_batch_production.json"]
@@ -68,13 +125,16 @@ class SecurityDockerExportTests(unittest.TestCase):
         user_parameters = json.dumps(
             nodes["Configurer utilisateur"]["parameters"], ensure_ascii=False
         )
-        self.assertIn("MAILFLOW_USER_ID", user_parameters)
+        self.assertIn("CONFIGURER_UUID_MAILFLOW", user_parameters)
         assignments = {
             assignment["name"]: assignment["value"]
             for assignment in nodes["Configurer utilisateur"]["parameters"][
                 "assignments"
             ]["assignments"]
         }
+        self.assertEqual(
+            assignments["backend_url"], "http://host.docker.internal:8000"
+        )
         self.assertIs(assignments["test_mode"], False)
         for node_name in (
             "Lire curseur FastAPI",
@@ -83,11 +143,15 @@ class SecurityDockerExportTests(unittest.TestCase):
             "Journaliser échec classification",
             "Valider curseur FastAPI",
         ):
-            self.assertIn("$env.BACKEND_URL", nodes[node_name]["parameters"]["url"])
+            self.assertIn(
+                "$('Configurer utilisateur').first().json.backend_url",
+                nodes[node_name]["parameters"]["url"],
+            )
 
     def test_compose_has_short_retention_log_rotation_and_network_isolation(self):
         expected = (
             'image: docker.n8n.io/n8nio/n8n:2.43.6',
+            'N8N_BLOCK_ENV_ACCESS_IN_NODE: "true"',
             'EXECUTIONS_DATA_PRUNE: "true"',
             'EXECUTIONS_DATA_MAX_AGE: ${EXECUTIONS_DATA_MAX_AGE:-72}',
             'EXECUTIONS_DATA_PRUNE_MAX_COUNT: ${EXECUTIONS_DATA_PRUNE_MAX_COUNT:-500}',
@@ -107,6 +171,7 @@ class SecurityDockerExportTests(unittest.TestCase):
                 self.assertIn(setting, self.compose)
 
         self.assertNotIn("image: ${N8N_IMAGE", self.compose)
+        self.assertNotIn("WEBHOOK_SECRET: ${WEBHOOK_SECRET", self.compose)
         self.assertIn('"127.0.0.1:${BACKEND_PORT:-8000}:8000"', self.compose)
         self.assertIn('"127.0.0.1:${FRONTEND_PORT:-3000}:3000"', self.compose)
 
