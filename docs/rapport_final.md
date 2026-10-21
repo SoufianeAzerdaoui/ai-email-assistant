@@ -23,6 +23,17 @@ Les objectifs obligatoires retenus sont :
 - sécuriser les accès, webhooks et secrets ;
 - prouver l'idempotence et les comportements d'erreur par des tests.
 
+
+résumé quotidien et top 5 des priorités
+![Dashboard Mailflow : résumé quotidien et top 5 des priorités](../screenshots/dashboard.png)
+
+
+Boîte de réception Mailflow avec filtres et pagination
+![Boîte de réception Mailflow avec filtres et pagination](../screenshots/inbox.png)
+
+Génération et modification d'un brouillon IA
+![Génération et modification d'un brouillon IA](../screenshots/brouillon-ia.png)
+
 ## 2. Architecture retenue
 
 ```mermaid
@@ -35,6 +46,7 @@ flowchart TB
     N8N -->|OAuth2| G[Gmail API]
     N8N --> AI[Gemini 3.5 Flash]
     N8N -. erreur .-> ERR[Error Workflow]
+
     ERR --> API
 ```
 
