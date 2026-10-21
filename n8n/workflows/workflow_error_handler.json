@@ -3,59 +3,131 @@
   "nodes": [
     {
       "parameters": {},
-      "id": "error-trigger",
+      "id": "affdd2b3-4867-4413-83f6-914fbac82dc6",
       "name": "Erreur workflow",
       "type": "n8n-nodes-base.errorTrigger",
       "typeVersion": 1,
-      "position": [-400, 160]
+      "position": [
+        0,
+        0
+      ]
     },
     {
       "parameters": {
-        "mode": "runOnceForAllItems",
-        "jsCode": "const event = $json || {};\nconst userId = String($env.MAILFLOW_USER_ID || '').trim();\nconst uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;\nif (!uuid.test(userId)) throw new Error('MAILFLOW_USER_ID doit contenir un UUID valide.');\nconst workflowName = String(event.workflow?.name || 'Workflow n8n').slice(0, 255);\nconst workflowId = String(event.workflow?.id || 'unknown').slice(0, 80);\nconst executionId = String(event.execution?.id || `manual-${Date.now()}`).slice(0, 80);\nconst nodeName = event.execution?.lastNodeExecuted ? String(event.execution.lastNodeExecuted).slice(0, 255) : null;\nreturn [{ json: {\n  user_id: userId,\n  email_id: null,\n  idempotency_key: `n8n-error:${workflowId}:${executionId}`.slice(0, 255),\n  workflow_name: workflowName,\n  node_name: nodeName,\n  error_type: 'workflow_failed',\n  status_code: null,\n  attempt: null\n} }];"
+        "jsCode": "const event = $json || {};\nconst userId = String($('Configuration Mailflow').first().json.mailflow_user_id || '').trim();\nconst uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;\nif (!uuid.test(userId)) throw new Error('MAILFLOW_USER_ID doit contenir un UUID valide.');\nconst workflowName = String(event.workflow?.name || 'Workflow n8n').slice(0, 255);\nconst workflowId = String(event.workflow?.id || 'unknown').slice(0, 80);\nconst executionId = String(event.execution?.id || `manual-${Date.now()}`).slice(0, 80);\nconst nodeName = event.execution?.lastNodeExecuted ? String(event.execution.lastNodeExecuted).slice(0, 255) : null;\nreturn [{ json: {\n  user_id: userId,\n  email_id: null,\n  idempotency_key: `n8n-error:${workflowId}:${executionId}`.slice(0, 255),\n  workflow_name: workflowName,\n  node_name: nodeName,\n  error_type: 'workflow_failed',\n  status_code: null,\n  attempt: null\n} }];"
       },
-      "id": "sanitize-error",
+      "id": "ca961a16-2c6f-48d4-9ad0-54c50e098e4d",
       "name": "Préparer erreur sûre",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [-176, 160],
+      "position": [
+        224,
+        0
+      ],
       "notesInFlow": true,
       "notes": "Ne transmet jamais le message brut, la stack, les données d'e-mail, les headers ou les credentials de l'exécution en échec."
     },
     {
       "parameters": {
         "method": "POST",
-        "url": "={{ $env.BACKEND_URL }}/internal/webhooks/workflow-errors",
+        "url": "={{ $('Configuration Mailflow').first().json.backend_url + '/internal/webhooks/workflow-errors' }}",
         "authentication": "genericCredentialType",
         "genericAuthType": "httpHeaderAuth",
         "sendBody": true,
-        "contentType": "json",
         "specifyBody": "json",
         "jsonBody": "={{ $json }}",
-        "options": {"timeout": 30000}
+        "options": {
+          "timeout": 30000
+        }
       },
-      "id": "store-error",
+      "id": "8e867c2b-9fc8-4c3c-8ee8-965090971527",
       "name": "Journaliser dans FastAPI",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.3,
-      "position": [48, 160],
+      "position": [
+        448,
+        0
+      ],
       "retryOnFail": true,
       "maxTries": 2,
       "waitBetweenTries": 5000,
       "notesInFlow": true,
       "notes": "Credential requis : \"Mailflow - Vers FastAPI\", Header Auth X-Webhook-Secret = WEBHOOK_SECRET. Aucun credential n'est inclus dans l'export."
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "mailflow-backend-url",
+              "name": "backend_url",
+              "value": "http://host.docker.internal:8000",
+              "type": "string"
+            },
+            {
+              "id": "mailflow-user-id",
+              "name": "mailflow_user_id",
+              "value": "CONFIGURER_UUID_MAILFLOW",
+              "type": "string"
+            }
+          ]
+        },
+        "includeOtherFields": true,
+        "options": {}
+      },
+      "id": "20eeed8b-4fb3-42a1-a4d8-89505c07de53",
+      "name": "Configuration Mailflow",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        224,
+        192
+      ],
+      "notesInFlow": true,
+      "notes": "Configuration non sensible. Pour l'architecture hybride, conserver http://host.docker.internal:8000. Pour Docker Compose complet, remplacer uniquement cette valeur par http://backend:8000. Renseigner aussi l'UUID de l'utilisateur Mailflow avant activation."
     }
   ],
   "connections": {
     "Erreur workflow": {
-      "main": [[{"node": "Préparer erreur sûre", "type": "main", "index": 0}]]
+      "main": [
+        [
+          {
+            "node": "Configuration Mailflow",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "Préparer erreur sûre": {
-      "main": [[{"node": "Journaliser dans FastAPI", "type": "main", "index": 0}]]
+      "main": [
+        [
+          {
+            "node": "Journaliser dans FastAPI",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Configuration Mailflow": {
+      "main": [
+        [
+          {
+            "node": "Préparer erreur sûre",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     }
   },
   "pinData": {},
   "active": false,
-  "settings": {"executionOrder": "v1"},
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "saveManualExecutions": false
+  },
   "tags": []
 }
